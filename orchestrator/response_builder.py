@@ -10,10 +10,11 @@ from agents.crm_agent import (
 from agents.report_agent import daily_briefing
 from agents.ingest_agent import ingest
 from agents.lead_agent import find_leads
+from agents.reasoning_agent import deep_reason
 from memory.sql_store import add_task, get_pending_tasks
 from memory.vector_store import add as vec_add
 from llm.router import complete
-from tools.utils import format_contact, truncate, extract_urls
+from tools.utils import format_contact, extract_urls
 from tools.scraper import scrape_url
 from config import config
 import json
@@ -85,7 +86,7 @@ async def process_message(message: str, image_context: str = "") -> str:
             result = await research_company(company)
             s = result.get("summary", {})
             if isinstance(s, str):
-                return truncate(s)
+                return s
             lines = [
                 f"*{s.get('name', company)}*",
                 f"_{s.get('what_they_do', '')}_",
@@ -117,7 +118,7 @@ async def process_message(message: str, image_context: str = "") -> str:
             role = entities.get("role")
             await message_status(f"🕵️ Finding leads at {company}...")
             result = await find_leads(company, role=role)
-            return truncate(_format_leads(result))
+            return _format_leads(result)
 
         # ── DRAFT OUTREACH ────────────────────────────────────────────────────
         elif intent == "draft_outreach":
@@ -138,7 +139,7 @@ async def process_message(message: str, image_context: str = "") -> str:
                 "",
                 "Reply *send* to send, or give me feedback to revise."
             ]
-            return truncate("\n".join(lines))
+            return "\n".join(lines)
 
         # ── ADD CONTACT ───────────────────────────────────────────────────────
         elif intent == "add_contact":
@@ -172,7 +173,7 @@ async def process_message(message: str, image_context: str = "") -> str:
             for c in contacts[:10]:
                 lines.append(format_contact(c))
                 lines.append("")
-            return truncate("\n".join(lines))
+            return "\n".join(lines)
 
         # ── PIPELINE STATUS ───────────────────────────────────────────────────
         elif intent == "pipeline_status":
@@ -194,7 +195,7 @@ async def process_message(message: str, image_context: str = "") -> str:
             for r in results:
                 lines.append(f"[{r['collection']}] {r['text'][:200]}")
                 lines.append("")
-            return truncate("\n".join(lines))
+            return "\n".join(lines)
 
         # ── ADD TASK ──────────────────────────────────────────────────────────
         elif intent == "add_task":
@@ -243,22 +244,29 @@ async def _ingest_and_reply(enriched: str, intent: str, entities: dict) -> str:
             header += f": {title}"
         if reply:
             vec_add("conversations", reply, metadata={"role": "assistant"})
-            return truncate(f"{header}\n\n{reply}")
-        return truncate(header)
+            return f"{header}\n\n{reply}"
+        return header
 
-    # Not knowledge worth storing → a normal, context-aware conversational reply.
-    messages = [
-        {"role": "system", "content": f"""You are the personal AI operating system for {config.my_name}, {config.my_role} at {config.company_name}.
+    # Not knowledge worth storing → a context-aware conversational reply.
+    # Trivial messages get a quick single-pass answer; anything substantive runs
+    # through the full multi-step agentic reasoning pipeline.
+    stripped = enriched.strip()
+    is_trivial = len(stripped) < 15 and "?" not in stripped
+    if is_trivial:
+        messages = [
+            {"role": "system", "content": f"""You are the personal AI operating system for {config.my_name}, {config.my_role} at {config.company_name}.
 {config.company_name}: {config.my_one_liner}
-You have full context of their business, contacts, and outreach. Be direct, smart, and immediately useful.
-Use Telegram markdown formatting (* for bold, _ for italic).
+Be direct, smart, and immediately useful. Use Telegram markdown (* bold, _ italic).
 
 {f"CONTEXT FROM MEMORY:{chr(10)}{context}" if context else ""}"""},
-        {"role": "user", "content": enriched}
-    ]
-    response = await complete(messages, task_type="general")
+            {"role": "user", "content": enriched}
+        ]
+        response = await complete(messages, task_type="general")
+    else:
+        response = await deep_reason(enriched, context=context)
+
     vec_add("conversations", response, metadata={"role": "assistant"})
-    return truncate(response)
+    return response
 
 def _clean_company(text: str) -> str:
     """Trim trailing lead-gen filler words from an extracted company name."""
