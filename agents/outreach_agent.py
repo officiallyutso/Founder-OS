@@ -80,6 +80,10 @@ Only output JSON."""}
     except Exception:
         draft = {"subject": "Following up", "body": raw[:1000], "linkedin_variant": "", "personalization_notes": ""}
 
+    # Attach recipient details so the email can actually be sent later.
+    draft["to_email"] = contact.get("email") if contact else None
+    draft["contact_name"] = contact.get("name") if contact else (contact_name or "")
+    draft["company_name"] = (contact.get("company") if contact else None) or company_name or ""
     return draft
 
 async def draft_linkedin_message(contact_name: str, company_name: str = "", context: str = "") -> str:

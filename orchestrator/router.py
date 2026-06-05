@@ -16,6 +16,11 @@ async def classify_intent(message: str) -> dict:
         return {"intent": "save_note", "entities": {"content": message}, "confidence": 0.95}
     if m.startswith("todo:") or m.startswith("task:") or m.startswith("remind me"):
         return {"intent": "add_task", "entities": {"title": message.replace("todo:", "").replace("task:", "").strip()}, "confidence": 0.95}
+    # Confirming a send of the last drafted email.
+    _send_phrases = ("send", "send it", "send the email", "send email", "send mail",
+                     "send now", "yes send", "send this", "go ahead and send", "fire it")
+    if m.strip().strip("!.") in _send_phrases or m.startswith("send to ") or m.startswith("send it to "):
+        return {"intent": "send_email", "entities": {}, "confidence": 0.95, "raw_message": message}
     if "daily report" in m or "briefing" in m or "my status" in m:
         return {"intent": "daily_report", "entities": {}, "confidence": 0.95}
     if "follow-up" in m or "followup" in m or "follow up" in m:

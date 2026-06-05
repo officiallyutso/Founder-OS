@@ -16,7 +16,10 @@ from memory.vector_store import add as vec_add
 from llm.router import complete
 from tools.utils import format_contact, extract_urls
 from tools.scraper import scrape_url
+from outreach.email_sender import send_email
+from outreach.tracker import mark_sent
 from config import config
+import re
 import json
 
 # Intents that are explicit commands — handled directly. Everything else flows
@@ -24,8 +27,14 @@ import json
 COMMAND_INTENTS = {
     "research_company", "find_contacts", "draft_outreach", "add_contact",
     "update_contact", "get_followups", "pipeline_status", "search_memory",
-    "add_task", "get_tasks", "daily_report",
+    "add_task", "get_tasks", "daily_report", "send_email",
 }
+
+# Last drafted email, kept so a follow-up "send" can dispatch it. The bot is
+# single-user (only the authorized Telegram user), so a module-level slot is fine.
+_pending_draft = {}
+
+_EMAIL_IN_TEXT = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
 
 def _scrape_links(message: str) -> str:
@@ -50,6 +59,7 @@ async def process_message(message: str, image_context: str = "") -> str:
     `image_context` is a textual understanding of any attached image (from the
     vision layer). Links inside the message are scraped automatically.
     """
+    global _pending_draft
 
     # ── Enrich the message with scraped link content + image understanding ────
     link_context = _scrape_links(message)
@@ -63,8 +73,8 @@ async def process_message(message: str, image_context: str = "") -> str:
     intent = classified.get("intent", "general_chat")
     entities = classified.get("entities", {})
 
-    print(f"[Orchestrator] Intent: {intent} | Entities: {entities} | "
-          f"links={bool(link_context)} image={bool(image_context)}")
+    _safe_print(f"[Orchestrator] Intent: {intent} | Entities: {entities} | "
+                f"links={bool(link_context)} image={bool(image_context)}")
 
     # Store the full (enriched) conversation in memory
     vec_add("conversations", enriched, metadata={"role": "user", "intent": intent})
@@ -126,8 +136,19 @@ async def process_message(message: str, image_context: str = "") -> str:
             contact_name = entities.get("person") or entities.get("contact")
             company_name = entities.get("company")
             draft = await draft_email(contact_name=contact_name, company_name=company_name, custom_context=message)
+
+            # Remember it so "send" can dispatch it.
+            _pending_draft = {
+                "subject": draft.get("subject", ""),
+                "body": draft.get("body", ""),
+                "to_email": draft.get("to_email"),
+                "contact_name": draft.get("contact_name", ""),
+                "company_name": draft.get("company_name", ""),
+            }
+
             lines = [
                 f"*Draft Email*",
+                f"To: {draft.get('to_email') or '(no email on file)'}",
                 f"Subject: {draft.get('subject', '')}",
                 "",
                 draft.get("body", ""),
@@ -138,9 +159,48 @@ async def process_message(message: str, image_context: str = "") -> str:
                 "",
                 f"_{draft.get('personalization_notes', '')}_",
                 "",
-                "Reply *send* to send, or give me feedback to revise."
             ]
+            if draft.get("to_email"):
+                lines.append(f"Reply *send* to email this to {draft['to_email']}, or give feedback to revise.")
+            else:
+                lines.append("I don't have their email. Reply *send to name@company.com* to send, or give feedback to revise.")
             return "\n".join(lines)
+
+        # ── SEND EMAIL ────────────────────────────────────────────────────────
+        elif intent == "send_email":
+            if not _pending_draft or not _pending_draft.get("body"):
+                return ("Nothing drafted yet. First say e.g. "
+                        "*draft email to Jane at Acme*, then reply *send*.")
+
+            # Allow overriding/supplying the recipient inline: "send to x@y.com".
+            override = _EMAIL_IN_TEXT.search(message)
+            to_email = override.group(0) if override else _pending_draft.get("to_email")
+            if not to_email:
+                return ("I don't have a recipient email for this draft. "
+                        "Reply: *send to their@email.com*")
+
+            await message_status(f"📤 Sending to {to_email}...")
+            result = send_email(
+                to_address=to_email,
+                subject=_pending_draft.get("subject", "(no subject)"),
+                body=_pending_draft.get("body", ""),
+            )
+            if not result.get("success"):
+                return f"⚠️ Couldn't send: {result.get('error', 'unknown error')}"
+
+            # Log it + advance CRM status if we know the contact.
+            name = _pending_draft.get("contact_name")
+            if name:
+                try:
+                    mark_sent(name, channel="email",
+                              subject=_pending_draft.get("subject"),
+                              body=_pending_draft.get("body"))
+                except Exception as e:
+                    print(f"[send_email] tracker log failed: {e}")
+            sent_to = to_email
+            _pending_draft = {}
+            return (f"✅ Email sent to {sent_to}.\n"
+                    f"Logged it and set a 3-day follow-up reminder.")
 
         # ── ADD CONTACT ───────────────────────────────────────────────────────
         elif intent == "add_contact":
@@ -227,7 +287,7 @@ async def process_message(message: str, image_context: str = "") -> str:
 
     except Exception as e:
         import traceback
-        print(f"[Orchestrator Error] {e}\n{traceback.format_exc()}")
+        _safe_print(f"[Orchestrator Error] {e}\n{traceback.format_exc()}")
         return f"⚠️ Something went wrong: {str(e)[:200]}\n\nTry rephrasing or check the logs."
 
 # Helpers
@@ -347,6 +407,16 @@ def _extract_after(text: str, keywords: list) -> str:
             return text[idx + len(kw):].strip()
     return ""
 
+def _safe_print(text: str):
+    """Print without ever crashing on consoles that can't encode emoji."""
+    try:
+        print(text)
+    except Exception:
+        try:
+            print(text.encode("ascii", "replace").decode("ascii"))
+        except Exception:
+            pass
+
 async def message_status(text: str):
     """Placeholder — bot handlers will send typing indicator instead."""
-    print(f"[Status] {text}")
+    _safe_print(f"[Status] {text}")
