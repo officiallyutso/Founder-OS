@@ -1,12 +1,14 @@
 from groq import AsyncGroq
 from config import config
 
-client = AsyncGroq(api_key=config.groq_api_key)
+client = AsyncGroq(api_key=config.groq_api_key) if config.groq_api_key else None
 
 class RateLimitError(Exception):
     pass
 
 async def complete(messages: list, max_tokens: int = 2048) -> str:
+    if client is None:
+        raise RuntimeError("Groq not configured (GROQ_API_KEY missing)")
     try:
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",

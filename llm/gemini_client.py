@@ -1,10 +1,15 @@
 import google.generativeai as genai
 from config import config
 
-genai.configure(api_key=config.gemini_api_key)
-model = genai.GenerativeModel("gemini-1.5-flash")
+if config.gemini_api_key:
+    genai.configure(api_key=config.gemini_api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+else:
+    model = None
 
 async def complete(messages: list, max_tokens: int = 2048) -> str:
+    if model is None:
+        raise RuntimeError("Gemini not configured (GOOGLE_GEMINI_API_KEY missing)")
     # Convert OpenAI-style messages to Gemini format
     prompt_parts = []
     for m in messages:

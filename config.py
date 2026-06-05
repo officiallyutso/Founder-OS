@@ -20,15 +20,25 @@ class Config:
     my_one_liner: str
 
 def load_config() -> Config:
-    required = {
-        "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-        "GROQ_API_KEY": os.getenv("GROQ_API_KEY"),
-        "MY_TELEGRAM_USER_ID": os.getenv("MY_TELEGRAM_USER_ID"),
-    }
-    missing = [k for k, v in required.items() if not v]
+    missing = []
+    if not os.getenv("TELEGRAM_BOT_TOKEN"):
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not os.getenv("MY_TELEGRAM_USER_ID"):
+        missing.append("MY_TELEGRAM_USER_ID")
+
+    # At least one LLM provider key is required. Any one is enough — the router
+    # falls back across whatever is configured (Groq -> Gemini -> OpenAI).
+    llm_keys = [
+        os.getenv("GROQ_API_KEY"),
+        os.getenv("GOOGLE_GEMINI_API_KEY"),
+        os.getenv("OPENAI_API_KEY"),
+    ]
+    if not any(llm_keys):
+        missing.append("at least one of GROQ_API_KEY / GOOGLE_GEMINI_API_KEY / OPENAI_API_KEY")
+
     if missing:
         print(f"[FATAL] Missing required env vars: {', '.join(missing)}")
-        print("Copy .env.example to .env and fill in all values.")
+        print("Copy .env.example to .env and fill in the required values.")
         exit(1)
 
     return Config(

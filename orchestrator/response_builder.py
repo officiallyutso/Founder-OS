@@ -8,26 +8,72 @@ from agents.crm_agent import (
     pipeline, search as crm_search, set_followup
 )
 from agents.report_agent import daily_briefing
+from agents.ingest_agent import ingest
 from memory.sql_store import add_task, get_pending_tasks
 from memory.vector_store import add as vec_add
 from llm.router import complete
-from tools.utils import format_contact, truncate
+from tools.utils import format_contact, truncate, extract_urls
+from tools.scraper import scrape_url
 from config import config
 import json
 
-async def process_message(message: str) -> str:
-    """Main entry point: process a user message and return a response string."""
+# Intents that are explicit commands — handled directly. Everything else flows
+# through the auto-ingest path so it gets understood, classified, and stored.
+COMMAND_INTENTS = {
+    "research_company", "draft_outreach", "add_contact", "update_contact",
+    "get_followups", "pipeline_status", "search_memory", "add_task",
+    "get_tasks", "daily_report",
+}
+
+
+def _scrape_links(message: str) -> str:
+    """Find URLs in the message, scrape them, and return a readable context block."""
+    urls = extract_urls(message)
+    blocks = []
+    for url in urls[:3]:
+        scraped = scrape_url(url, max_chars=4000)
+        if scraped.get("error"):
+            blocks.append(f"URL: {url}\n[Could not read: {scraped['error']}]")
+        else:
+            blocks.append(
+                f"URL: {url}\nTitle: {scraped.get('title', '')}\n"
+                f"Content: {scraped.get('text', '')}"
+            )
+    return "\n\n".join(blocks)
+
+
+async def process_message(message: str, image_context: str = "") -> str:
+    """Main entry point: process a user message and return a response string.
+
+    `image_context` is a textual understanding of any attached image (from the
+    vision layer). Links inside the message are scraped automatically.
+    """
+
+    # ── Enrich the message with scraped link content + image understanding ────
+    link_context = _scrape_links(message)
+    enriched = message
+    if image_context:
+        enriched += f"\n\n[IMAGE CONTENT]\n{image_context}"
+    if link_context:
+        enriched += f"\n\n[LINK CONTENT]\n{link_context}"
 
     classified = await classify_intent(message)
     intent = classified.get("intent", "general_chat")
     entities = classified.get("entities", {})
 
-    print(f"[Orchestrator] Intent: {intent} | Entities: {entities}")
+    print(f"[Orchestrator] Intent: {intent} | Entities: {entities} | "
+          f"links={bool(link_context)} image={bool(image_context)}")
 
-    # Store conversation in memory
-    vec_add("conversations", message, metadata={"role": "user", "intent": intent})
+    # Store the full (enriched) conversation in memory
+    vec_add("conversations", enriched, metadata={"role": "user", "intent": intent})
 
     try:
+
+        # ── AUTO-INGEST (default path for any non-command message) ────────────
+        # Anything that isn't an explicit command gets understood, classified,
+        # and stored automatically — text, shared links, or image content.
+        if intent not in COMMAND_INTENTS:
+            return await _ingest_and_reply(enriched, intent, entities)
 
         # ── RESEARCH ──────────────────────────────────────────────────────────
         if intent == "research_company":
@@ -157,21 +203,9 @@ async def process_message(message: str) -> str:
             await message_status("📊 Generating your briefing...")
             return await daily_briefing()
 
-        # ── GENERAL CHAT ──────────────────────────────────────────────────────
+        # ── FALLBACK (any unrecognized command) ───────────────────────────────
         else:
-            context = await build_context(message, intent, entities)
-            messages = [
-                {"role": "system", "content": f"""You are the personal AI operating system for {config.my_name}, {config.my_role} at {config.company_name}.
-{config.company_name}: {config.my_one_liner}
-You have full context of their business, contacts, and outreach. Be direct, smart, and immediately useful.
-Use Telegram markdown formatting (* for bold, _ for italic).
-
-{f"CONTEXT FROM MEMORY:{chr(10)}{context}" if context else ""}"""},
-                {"role": "user", "content": message}
-            ]
-            response = await complete(messages, task_type="general")
-            vec_add("conversations", response, metadata={"role": "assistant"})
-            return truncate(response)
+            return await _ingest_and_reply(enriched, intent, entities)
 
     except Exception as e:
         import traceback
@@ -179,6 +213,37 @@ Use Telegram markdown formatting (* for bold, _ for italic).
         return f"⚠️ Something went wrong: {str(e)[:200]}\n\nTry rephrasing or check the logs."
 
 # Helpers
+async def _ingest_and_reply(enriched: str, intent: str, entities: dict) -> str:
+    """Auto-classify + store the content, then craft a useful reply."""
+    context = await build_context(enriched, intent, entities)
+    result = await ingest(enriched, context=context, source_type="text")
+    reply = (result.get("reply") or "").strip()
+
+    if result.get("stored"):
+        category = result.get("category", "note").replace("_", " ")
+        title = result.get("title", "")
+        header = f"🗂 *Captured* — _{category}_"
+        if title:
+            header += f": {title}"
+        if reply:
+            vec_add("conversations", reply, metadata={"role": "assistant"})
+            return truncate(f"{header}\n\n{reply}")
+        return truncate(header)
+
+    # Not knowledge worth storing → a normal, context-aware conversational reply.
+    messages = [
+        {"role": "system", "content": f"""You are the personal AI operating system for {config.my_name}, {config.my_role} at {config.company_name}.
+{config.company_name}: {config.my_one_liner}
+You have full context of their business, contacts, and outreach. Be direct, smart, and immediately useful.
+Use Telegram markdown formatting (* for bold, _ for italic).
+
+{f"CONTEXT FROM MEMORY:{chr(10)}{context}" if context else ""}"""},
+        {"role": "user", "content": enriched}
+    ]
+    response = await complete(messages, task_type="general")
+    vec_add("conversations", response, metadata={"role": "assistant"})
+    return truncate(response)
+
 def _extract_after(text: str, keywords: list) -> str:
     text_lower = text.lower()
     for kw in keywords:

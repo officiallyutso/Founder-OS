@@ -1,4 +1,18 @@
+import re
 from datetime import datetime
+
+URL_RE = re.compile(r"https?://[^\s<>\"')]+", re.IGNORECASE)
+
+def extract_urls(text: str) -> list:
+    """Return a de-duplicated list of http(s) URLs found in text."""
+    if not text:
+        return []
+    seen = []
+    for url in URL_RE.findall(text):
+        url = url.rstrip(".,;:)]}\u201d\u2019")
+        if url not in seen:
+            seen.append(url)
+    return seen
 
 def format_contact(contact: dict) -> str:
     """Format a contact dict for display in Telegram."""
