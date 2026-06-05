@@ -9,7 +9,7 @@ from agents.crm_agent import (
 )
 from agents.report_agent import daily_briefing
 from agents.ingest_agent import ingest
-from agents.lead_agent import find_leads
+from agents.lead_agent import find_leads, parse_lead_request
 from agents.reasoning_agent import deep_reason
 from memory.sql_store import add_task, get_pending_tasks
 from memory.vector_store import add as vec_add
@@ -107,18 +107,19 @@ async def process_message(message: str, image_context: str = "") -> str:
 
         # ── FIND CONTACTS / LEAD GEN ──────────────────────────────────────────
         elif intent == "find_contacts":
-            company = entities.get("company") or _extract_after(
-                message, ["leads at", "contacts at", "contacts for", "leads for",
-                          "people at", "at", "from", "for"])
-            company = _clean_company(company)
-            if not company:
-                return ("Which company should I find leads at? Try: "
-                        "*find contacts at HDFC Ergo* or *get me leads at Acme, "
-                        "head of sales*")
-            role = entities.get("role")
-            await message_status(f"🕵️ Finding leads at {company}...")
-            result = await find_leads(company, role=role)
-            return _format_leads(result)
+            req = await parse_lead_request(message)
+            company = req.get("company", "")
+            people = req.get("people", [])
+            role = req.get("role", "") or entities.get("role")
+            if not company and not people:
+                return ("Tell me who or where to look. Examples:\n"
+                        "• *find contacts at HDFC Ergo*\n"
+                        "• *get me the head of sales at Acme*\n"
+                        "• *email, linkedin, phone of Jane Doe, John Roe of Predco AI*")
+            target_desc = ", ".join(people) if people else (f"{role} at {company}" if role else company)
+            await message_status(f"🕵️ Finding contacts for {target_desc}...")
+            result = await find_leads(company=company, role=role, people=people)
+            return await _present_leads(result)
 
         # ── DRAFT OUTREACH ────────────────────────────────────────────────────
         elif intent == "draft_outreach":
@@ -268,16 +269,28 @@ Be direct, smart, and immediately useful. Use Telegram markdown (* bold, _ itali
     vec_add("conversations", response, metadata={"role": "assistant"})
     return response
 
-def _clean_company(text: str) -> str:
-    """Trim trailing lead-gen filler words from an extracted company name."""
-    text = (text or "").strip(" .?,")
-    drop = {"email", "emails", "contact", "contacts", "details", "info",
-            "phone", "number", "numbers", "linkedin", "leads", "lead",
-            "please", "now", "asap"}
-    words = text.split()
-    while words and words[-1].lower() in drop:
-        words.pop()
-    return " ".join(words).strip()
+async def _present_leads(result: dict) -> str:
+    """Factual lead block + a short, varied LLM-written intro (dynamic phrasing)."""
+    body = _format_leads(result)
+    leads = result.get("leads", [])
+    found = sum(1 for L in leads if L.get("email") or L.get("phones") or L.get("linkedin"))
+    try:
+        intro = await complete([
+            {"role": "system", "content":
+                "You are a founder's assistant. Write ONE short, natural, varied "
+                "sentence introducing the lead results below. Don't repeat data, "
+                "don't use the same template every time. Plain text, no markdown."},
+            {"role": "user", "content":
+                f"Company/target: {result.get('company') or 'the named people'}. "
+                f"People found: {found}/{len(leads)}. "
+                f"Domain: {result.get('domain') or 'unknown'}. Write the one-liner."},
+        ], task_type="general", max_tokens=80)
+        intro = (intro or "").strip()
+        if intro:
+            return f"{intro}\n\n{body}"
+    except Exception:
+        pass
+    return body
 
 
 def _format_leads(r: dict) -> str:
@@ -310,7 +323,11 @@ def _format_leads(r: dict) -> str:
             if L.get("email"):
                 lines.append(f"   ✉️ {L['email']}  _({L.get('email_confidence','')})_")
             if L.get("email_guesses") and L.get("email_confidence") != "verified (found online)":
-                lines.append(f"   ↳ other guesses: {', '.join(L['email_guesses'][1:3])}")
+                others = [g for g in L['email_guesses'][1:3]]
+                if others:
+                    lines.append(f"   ↳ other guesses: {', '.join(others)}")
+            if L.get("phones"):
+                lines.append(f"   📞 {', '.join(L['phones'][:2])}")
             if L.get("linkedin"):
                 lines.append(f"   🔗 {L['linkedin']}")
     elif not (company_emails or company_phones):
