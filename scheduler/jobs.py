@@ -34,6 +34,26 @@ async def send_to_user(text: str):
                 logger.error(f"Scheduled send failed: {e}")
 
 
+async def send_voice_to_user(path: str, caption: str = "") -> bool:
+    """Deliver a synthesized audio file as a Telegram voice message (or audio fallback)."""
+    from config import config
+    if not (_bot_app and config.my_telegram_user_id):
+        return False
+    chat = config.my_telegram_user_id
+    cap = (caption[:1000] or None)
+    try:
+        with open(path, "rb") as f:
+            try:
+                await _bot_app.bot.send_voice(chat_id=chat, voice=f, caption=cap)
+            except Exception:
+                f.seek(0)
+                await _bot_app.bot.send_audio(chat_id=chat, audio=f, caption=cap)
+        return True
+    except Exception as e:
+        logger.error(f"Voice send failed: {e}")
+        return False
+
+
 async def send_document_to_user(path: str, caption: str = "") -> bool:
     """Deliver a generated file to the founder on Telegram. Returns delivery success."""
     from config import config

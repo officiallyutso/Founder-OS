@@ -96,7 +96,7 @@ async def generate_pdf(title: str, content: str, filename: str = None):
     name="create_document",
     description="Create a plain-text or Markdown document file from content and deliver it "
                 "to the founder on Telegram. Use for notes, specs, or drafts where a .pdf "
-                "isn't required.",
+                "isn't required. Do NOT use this for voice/audio requests — use send_voice_note instead.",
     parameters={
         "type": "object",
         "properties": {
