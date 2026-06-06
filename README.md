@@ -15,7 +15,7 @@
 > looks after your goals — all behind a human approval gate for anything risky.
 
 Founder OS is not a chatbot. It is an **autonomous agent**: you tell it an outcome, and
-it decides which of its **61 tools** to call, chains them, verifies its own work, and
+it decides which of its **69 tools** to call, chains them, verifies its own work, and
 gets things done — then quietly improves itself for next time.
 
 ---
@@ -42,7 +42,7 @@ gets things done — then quietly improves itself for next time.
 5. [Quickstart & setup](#5-quickstart--setup)
 6. [Configuration reference (.env)](#6-configuration-reference-env)
 7. [The agentic core in depth](#7-the-agentic-core-in-depth)
-8. [The complete tool catalog (61 tools)](#8-the-complete-tool-catalog-61-tools)
+8. [The complete tool catalog (69 tools)](#8-the-complete-tool-catalog-69-tools)
 9. [The memory brain](#9-the-memory-brain)
 10. [Self-evolution](#10-self-evolution)
 11. [Multi-agent orchestration](#11-multi-agent-orchestration)
@@ -164,7 +164,7 @@ flowchart TD
     policy --> approvals["Approval Gate (agent/approvals.py)"]
     policy --> registry["Tool + Skill Registry (agent/registry.py)"]
 
-    registry --> tools["61 Tools (agent/tools/*)"]
+    registry --> tools["69 Tools (agent/tools/*)"]
     loop --> subagents["Specialist Sub-agents (agent/subagent.py)"]
 
     tools --> brain[("Memory Brain")]
@@ -202,7 +202,7 @@ flowchart LR
         EVO["Self-evolution"]
     end
     subgraph Capabilities
-        REG["Tool Registry (61)"]
+        REG["Tool Registry (69)"]
         SKILLS["Self-authored tools"]
         OPT["Strategy optimizer"]
     end
@@ -381,13 +381,25 @@ python main.py
 
 On Windows the project ships with UTF-8-safe stdout/stderr so emoji output never crashes a cp1252 console (`main.py`).
 
+### Running 24/7 with Docker (recommended)
+
+The proactive features (heartbeat, daily briefing, follow-ups, topic monitors, nightly backups) only fire while the process is running, so for a true always-on cofounder run it as a container that restarts on reboot/crash:
+
+```bash
+docker compose up -d --build      # build + run in the background
+docker compose logs -f            # watch logs
+docker compose down               # stop
+```
+
+`docker-compose.yml` mounts `./data` as a volume, so the entire brain (SQLite DB + Chroma vectors + backups) lives on the host and survives rebuilds. The container reads your `.env` via `env_file`. A nightly job also zips the brain into `data/backups/` (last 14 kept); trigger one anytime by asking the bot to "back up now".
+
 ### First run
 
 When it boots you'll see:
 
 ```
 Starting Founder OS for <you> @ <company>
-[Scheduler] Started. Briefing 08:00, follow-ups 10:00, consolidation 03:00, heartbeat every 4h (9-21).
+[Scheduler] Started. Briefing 08:00, follow-ups 10:00, backup 02:00, consolidation 03:00, heartbeat every 4h (9-21).
 Bot is running. Send a message on Telegram to start.
 ```
 
@@ -536,13 +548,13 @@ manual and re-injected forever after.
 
 ---
 
-## 8. The complete tool catalog (61 tools)
+## 8. The complete tool catalog (69 tools)
 
 Tools are grouped by `category`. **🔒 = approval-gated** (won't run until you approve,
 unless `AUTONOMY_LEVEL=autonomous` / `AUTO_APPROVE=true`). Sub-agents receive only the
 categories relevant to their role (plus `memory`, which is always available).
 
-> Counts: **memory 8 · crm 6 · research 4 · outreach 3 · social 3 · reminders 3 · tasks 10 · goals 3 · calendar 3 · perception 6 · evolution 7 · meta 3 · orchestration 2 = 61**
+> Counts: **memory 8 · crm 6 · research 8 · outreach 3 · social 3 · reminders 3 · tasks 10 · goals 3 · calendar 3 · perception 6 · evolution 7 · meta 5 · orchestration 2 · finance 2 = 69**
 
 ### 8.1 `memory` (8)
 
@@ -568,7 +580,7 @@ categories relevant to their role (plus `memory`, which is always available).
 | `pipeline_status` | — | Summary of the pipeline grouped by status. |
 | `search_contacts` | — | Search contacts by name/company/role/email. |
 
-### 8.3 `research` (4)
+### 8.3 `research` (8 — includes document RAG)
 
 | Tool | Approval | What it does |
 |---|:--:|---|
@@ -576,6 +588,10 @@ categories relevant to their role (plus `memory`, which is always available).
 | `web_search` | — | Web search → list of `{title, url, snippet}` (Tavily → Serper → DuckDuckGo chain). |
 | `scrape_url` | — | Fetch and read a page; returns title + cleaned text. |
 | `find_leads` | — | Find contactable leads (emails/phones/LinkedIn) for a company, a role, or named people; saves to CRM. |
+| `ingest_file` | — | Ingest one local document (PDF/DOCX/TXT/MD/CSV/JSON) into the knowledge base for grounded Q&A. |
+| `ingest_folder` | — | Ingest **all** supported documents in a folder at once. |
+| `ask_documents` | — | Answer a question from your ingested files via semantic retrieval (returns sourced passages). |
+| `list_ingested_documents` | — | List which documents are in the knowledge base and how many chunks each has. |
 
 ### 8.4 `outreach` (3)
 
@@ -655,13 +671,15 @@ categories relevant to their role (plus `memory`, which is always available).
 | `best_approach` | — | Ask which approach has worked best for a decision group. |
 | `propose_code_change` | 🔒 | File a proposal to change its **own source code** — recorded only, never auto-applied. |
 
-### 8.12 `meta` (3)
+### 8.12 `meta` (5 — includes ops/backups)
 
 | Tool | Approval | What it does |
 |---|:--:|---|
 | `create_tool` | 🔒 | **Author a brand-new tool for itself** at runtime (validated, whitelisted imports, persisted). **Approval required** — you review the code first. |
 | `agent_status` | — | Report autonomy level, today's LLM usage, estimated cost, paused state. |
 | `recent_traces` | — | Inspect its own recent turns (which tools, how long) — self-diagnosis. |
+| `backup_now` | — | Back up the entire brain (DB + vector store + world state) into `data/backups/` immediately. |
+| `list_backups` | — | List existing backups (newest first) with size and timestamp. |
 
 ### 8.13 `orchestration` (2)
 
@@ -669,6 +687,15 @@ categories relevant to their role (plus `memory`, which is always available).
 |---|:--:|---|
 | `delegate` | — | Hand off a focused task to a specialist sub-agent (`researcher`/`outreach`/`ops`/`analyst`). |
 | `delegate_parallel` | — | Run several specialist handoffs **concurrently** and gather all results. |
+
+### 8.14 `finance` (2)
+
+| Tool | Approval | What it does |
+|---|:--:|---|
+| `set_financials` | — | Record current cash, monthly burn and MRR so the agent can track runway. |
+| `financial_status` | — | Cash, burn, MRR, net burn, **computed runway in months**, and a health status (healthy/warning/critical). |
+
+> Runway feeds the **Founder World Model**: every turn's snapshot includes it, and the agent proactively warns when runway drops below 6 months (warning) or 3 months (critical).
 
 ---
 
@@ -680,7 +707,7 @@ blob. There are four cooperating layers.
 ### 9.1 Vector memory (`memory/vector_store.py`)
 
 - **Engine:** ChromaDB, persistent at `data/chroma/` (telemetry disabled to avoid noisy errors).
-- **Collections:** `conversations`, `research`, `notes`, `outreach` (plus `skills`, `lessons`, and `llm_cache` created on demand).
+- **Collections:** `conversations`, `research`, `notes`, `outreach`, `documents` (plus `skills`, `lessons`, and `llm_cache` created on demand). The `documents` collection powers document RAG (`ingest_file`/`ask_documents`).
 - **API:** `add()`, `search()`, `search_all()` (sorted across collections), `get_recent()`, `delete()`.
 - Each item carries a `timestamp` and `source`, plus optional metadata like `importance` and `tags`.
 
@@ -1071,7 +1098,7 @@ FOUDNER_OS/
 │   ├── budget.py                # Spend cap, kill switch, cost tracking
 │   ├── trace.py                 # Per-turn flight recorder
 │   ├── store.py                 # Agent SQLite tables + accessors
-│   └── tools/                   # 61 tools across categories
+│   └── tools/                   # 69 tools across categories
 │       ├── __init__.py          # Imports all tool modules (registration) + loads generated
 │       ├── memory_tools.py      ├── brain_tools.py      ├── world_tools.py
 │       ├── crm_tools.py         ├── research_tools.py   ├── outreach_tools.py
@@ -1167,7 +1194,7 @@ you want; the agent picks the tools.
 ### 22.1 Fast local checks (no Telegram)
 
 ```bash
-# All modules import + all 61 tools register
+# All modules import + all 69 tools register
 python -c "import agent.tools, agent.core, scheduler.jobs, bot.handlers; from agent import registry; print('OK -', len(registry.all_tools()), 'tools')"
 
 # Behavior regression (side-effect-free)
@@ -1444,10 +1471,16 @@ Built incrementally, one commit per phase:
 | `feat: Founder World Model` | Live business snapshot injected every turn. |
 | `fix: validate approval-gated tool args` | Reject incomplete `create_tool` (and any approval-gated) calls up front instead of crashing at execution; non-empty self-authored tool bodies enforced. |
 | `feat: PDF/document generation` | Built-in `generate_pdf` + `create_document` tools (real PDFs via `fpdf2`) delivered to Telegram; all bot replies degrade Markdown→plain safely (fixes 400 Bad Request). |
+| `feat: 24/7 deployment + backups` | Dockerfile + docker-compose (restart: unless-stopped, `data/` volume); nightly 02:00 auto-backup of the whole brain + `backup_now`/`list_backups` tools. |
+| `feat: inline approval buttons` | Tappable ✅ Approve / ❌ Reject buttons on every approval (CallbackQueryHandler); `/approvals` renders button rows. |
+| `feat: finance/runway tracking` | `set_financials`/`financial_status` + runway math wired into the World Model with proactive low-cash warnings. |
+| `feat: document RAG` | `documents` collection + `ingest_file`/`ingest_folder`/`ask_documents`/`list_ingested_documents` to ground answers in your own files. |
+| `feat: spoken voice replies` | gTTS-based audio replies to voice messages (`VOICE_REPLIES`, optional). |
+| `test: pytest regression suite` | 28 tests covering registry, approvals, finance, RAG, backups, PDF, skills factory; DB isolated via `FOUNDER_OS_DB`. |
 
 ---
 
-## Appendix A — Full tool reference (all 61)
+## Appendix A — Full tool reference (all 69)
 
 Every tool below shows its **category**, whether it is **approval-gated**, its
 **parameters**, what it **returns**, an example **natural-language trigger** (what you'd
