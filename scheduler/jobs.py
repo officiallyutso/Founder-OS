@@ -34,6 +34,24 @@ async def send_to_user(text: str):
                 logger.error(f"Scheduled send failed: {e}")
 
 
+async def send_document_to_user(path: str, caption: str = "") -> bool:
+    """Deliver a generated file to the founder on Telegram. Returns delivery success."""
+    from config import config
+    if not (_bot_app and config.my_telegram_user_id):
+        return False
+    try:
+        with open(path, "rb") as f:
+            await _bot_app.bot.send_document(
+                chat_id=config.my_telegram_user_id,
+                document=f,
+                caption=(caption[:1000] or None),
+            )
+        return True
+    except Exception as e:
+        logger.error(f"Document send failed: {e}")
+        return False
+
+
 # ── DAILY BRIEFING + FOLLOWUPS (existing) ─────────────────────────────────────
 
 async def job_daily_briefing():

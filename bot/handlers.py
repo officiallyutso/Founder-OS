@@ -19,7 +19,8 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
         return
-    await update.message.reply_text(
+    await _send_reply(
+        update,
         "🤖 *Founder OS — autonomous agent online.*\n\n"
         "I'm an agentic, self-evolving chief-of-staff. Just talk to me naturally — "
         "I decide which tools to use and chain them to get things done:\n"
@@ -31,14 +32,13 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "I learn from how you work and improve over time. Risky actions (sending email, "
         "posting) I'll queue for your `approve <id>`.\n\n"
         "Try: `set a goal to book 5 demos this month`, or `remind me in 2 hours to review the deck`.",
-        parse_mode="Markdown",
     )
 
 
 async def approvals_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
-    await update.message.reply_text(approvals.pending_text(), parse_mode="Markdown")
+    await _send_reply(update, approvals.pending_text())
 
 
 def _status_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -165,11 +165,21 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _send_reply(update: Update, response: str):
-    for chunk in split_long_message(response):
+    """Send a (possibly long) reply, degrading from Markdown to plain text safely.
+
+    Telegram's legacy Markdown parser rejects unbalanced *, _, `, [ and other
+    characters that routinely appear in agent output (JSON, code, errors), which
+    surfaces as a 400 Bad Request. We retry the same chunk as plain text, and
+    swallow any final send error so a formatting issue never crashes the handler.
+    """
+    for chunk in split_long_message(response or "(no response)"):
         try:
             await update.message.reply_text(chunk, parse_mode="Markdown")
         except Exception:
-            await update.message.reply_text(chunk)
+            try:
+                await update.message.reply_text(chunk)
+            except Exception as e:
+                logger.error(f"reply_text failed: {e}")
 
 
 def register_handlers(app):

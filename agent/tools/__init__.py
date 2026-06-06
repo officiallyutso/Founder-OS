@@ -22,6 +22,7 @@ from agent.tools import (  # noqa: F401
     perception_tools,
     orchestration_tools,
     project_tools,
+    document_tools,
 )
 
 # Load any tools the agent authored for itself in past sessions.
