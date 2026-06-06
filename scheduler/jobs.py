@@ -54,6 +54,21 @@ async def send_voice_to_user(path: str, caption: str = "") -> bool:
         return False
 
 
+async def send_photo_to_user(path: str, caption: str = "") -> bool:
+    """Deliver an image (e.g. a rendered chart) to the founder on Telegram."""
+    from config import config
+    if not (_bot_app and config.my_telegram_user_id):
+        return False
+    try:
+        with open(path, "rb") as f:
+            await _bot_app.bot.send_photo(
+                chat_id=config.my_telegram_user_id, photo=f, caption=(caption[:1000] or None))
+        return True
+    except Exception as e:
+        logger.error(f"Photo send failed: {e}")
+        return False
+
+
 async def send_document_to_user(path: str, caption: str = "") -> bool:
     """Deliver a generated file to the founder on Telegram. Returns delivery success."""
     from config import config

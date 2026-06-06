@@ -29,7 +29,7 @@ def _latin1(text: str) -> str:
     return (text or "").encode("latin-1", "replace").decode("latin-1")
 
 
-def _write_pdf(safe: str, title: str, content: str):
+def _write_pdf(safe: str, title: str, content: str, chart_path: str = None):
     """Return (path, format). Try a real PDF; fall back to .txt if fpdf2 is absent."""
     os.makedirs(DOCS_DIR, exist_ok=True)
     try:
@@ -45,6 +45,12 @@ def _write_pdf(safe: str, title: str, content: str):
         pdf.ln(13)
         pdf.set_font("Helvetica", size=12)
         pdf.write(7, _latin1(content or ""))
+        if chart_path and os.path.exists(chart_path):
+            try:
+                pdf.ln(6)
+                pdf.image(chart_path, w=180)
+            except Exception:
+                pass
         path = os.path.join(DOCS_DIR, safe + ".pdf")
         pdf.output(path)
         return path, "pdf"
@@ -77,14 +83,41 @@ async def _deliver(path: str, caption: str) -> bool:
             "title": {"type": "string", "description": "Document title / heading."},
             "content": {"type": "string", "description": "The full body text (plain text; newlines become paragraphs)."},
             "filename": {"type": "string", "description": "Optional base filename (no extension)."},
+            "chart": {
+                "type": "object",
+                "description": "Optional chart to embed below the text.",
+                "properties": {
+                    "type": {"type": "string", "enum": ["bar", "line", "pie"]},
+                    "labels": {"type": "array", "items": {"type": "string"}},
+                    "values": {"type": "array", "items": {"type": "number"}},
+                    "title": {"type": "string"},
+                },
+            },
         },
         "required": ["title", "content"],
     },
     category="tasks",
 )
-async def generate_pdf(title: str, content: str, filename: str = None):
+async def generate_pdf(title: str, content: str, filename: str = None, chart: dict = None):
     safe = _safe_filename(filename or title)
-    path, fmt = _write_pdf(safe, title, content)
+    chart_path = None
+    if chart and chart.get("labels") and chart.get("values"):
+        try:
+            import tempfile
+            from agent import charts
+            tf = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            tf.close()
+            chart_path = charts.render_chart(
+                chart.get("type", "bar"), chart["labels"], chart["values"],
+                chart.get("title", ""), out_path=tf.name)
+        except Exception:
+            chart_path = None
+    path, fmt = _write_pdf(safe, title, content, chart_path=chart_path)
+    if chart_path:
+        try:
+            os.remove(chart_path)
+        except OSError:
+            pass
     delivered = await _deliver(path, caption=title[:1000])
     note = "Sent to your Telegram." if delivered else f"Saved locally at {path}."
     if fmt == "txt":

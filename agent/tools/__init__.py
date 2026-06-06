@@ -28,6 +28,7 @@ from agent.tools import (  # noqa: F401
     rag_tools,
     voice_tools,
     about_tools,
+    chart_tools,
 )
 
 # Load any tools the agent authored for itself in past sessions.
