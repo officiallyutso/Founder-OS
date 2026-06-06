@@ -1,18 +1,52 @@
 import logging
 import re
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
-from telegram.ext import ContextTypes, MessageHandler, CommandHandler, filters
+from telegram.ext import (
+    ContextTypes, MessageHandler, CommandHandler, CallbackQueryHandler, filters,
+)
 
 from bot.middleware import is_authorized
 from bot.formatters import split_long_message
-from agent import core, approvals
+from agent import core, approvals, store
 from llm.vision import describe_image
 
 logger = logging.getLogger(__name__)
 
 _APPROVE_RE = re.compile(r"^\s*(approve|reject)\s+#?(\d+)\s*$", re.IGNORECASE)
+_CALLBACK_RE = re.compile(r"^(approve|reject):(\d+)$")
+
+
+def _approval_keyboard(approval_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approve", callback_data=f"approve:{approval_id}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"reject:{approval_id}"),
+    ]])
+
+
+def _pending_ids() -> set:
+    return {a["id"] for a in store.list_pending_approvals()}
+
+
+async def _notify_new_approvals(update: Update, before: set):
+    """After a turn, send tappable approve/reject buttons for any new approvals."""
+    for appr in store.list_pending_approvals():
+        if appr["id"] in before:
+            continue
+        text = f"🔐 *Approval needed* (id `{appr['id']}`)\n{appr['summary']}"
+        for chunk in split_long_message(text):
+            try:
+                await update.message.reply_text(
+                    chunk, parse_mode="Markdown",
+                    reply_markup=_approval_keyboard(appr["id"]),
+                )
+            except Exception:
+                try:
+                    await update.message.reply_text(
+                        chunk, reply_markup=_approval_keyboard(appr["id"]))
+                except Exception as e:
+                    logger.error(f"approval button send failed: {e}")
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -38,7 +72,46 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def approvals_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
-    await _send_reply(update, approvals.pending_text())
+    pending = store.list_pending_approvals()
+    if not pending:
+        await _send_reply(update, "No pending approvals.")
+        return
+    for appr in pending:
+        text = f"🔐 *Approval* (id `{appr['id']}`)\n{appr['summary']}"
+        for chunk in split_long_message(text):
+            try:
+                await update.message.reply_text(
+                    chunk, parse_mode="Markdown",
+                    reply_markup=_approval_keyboard(appr["id"]))
+            except Exception:
+                await update.message.reply_text(
+                    chunk, reply_markup=_approval_keyboard(appr["id"]))
+
+
+async def on_approval_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle taps on the inline ✅ Approve / ❌ Reject buttons."""
+    query = update.callback_query
+    if query is None:
+        return
+    if not is_authorized(query.from_user.id):
+        await query.answer("Unauthorized.", show_alert=True)
+        return
+    m = _CALLBACK_RE.match(query.data or "")
+    if not m:
+        await query.answer()
+        return
+    action, aid = m.group(1), int(m.group(2))
+    await query.answer("Working…")
+    reply = await approvals.approve(aid) if action == "approve" else approvals.reject(aid)
+    # Replace the buttons with the outcome so it can't be tapped twice.
+    try:
+        await query.edit_message_text(reply[:4000])
+    except Exception:
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await query.message.reply_text(reply[:4000])
 
 
 def _status_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -68,9 +141,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    before = _pending_ids()
     try:
         response = await core.run(user_message, on_status=_status_callback(update, ctx))
         await _send_reply(update, response)
+        await _notify_new_approvals(update, before)
     except Exception as e:
         logger.error(f"Handler error: {e}")
         await update.message.reply_text(f"⚠️ Error: {str(e)[:200]}")
@@ -83,6 +158,7 @@ async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     caption = (msg.caption or "").strip()
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    before = _pending_ids()
 
     try:
         file_id, mime, is_image, filename = None, "image/jpeg", True, ""
@@ -116,6 +192,7 @@ async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             response = await core.run(text, on_status=_status_callback(update, ctx))
 
         await _send_reply(update, response)
+        await _notify_new_approvals(update, before)
     except Exception as e:
         logger.error(f"Media handler error: {e}")
         await update.message.reply_text(f"⚠️ Couldn't process that attachment: {str(e)[:200]}")
@@ -157,8 +234,10 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("I couldn't transcribe that. Mind typing it?")
             return
         await update.message.reply_text(f"🎙 _heard:_ {text[:200]}", parse_mode="Markdown")
+        before = _pending_ids()
         response = await core.run(text, on_status=_status_callback(update, ctx))
         await _send_reply(update, response)
+        await _notify_new_approvals(update, before)
     except Exception as e:
         logger.error(f"Voice handler error: {e}")
         await update.message.reply_text(f"⚠️ Voice error: {str(e)[:200]}")
@@ -185,6 +264,7 @@ async def _send_reply(update: Update, response: str):
 def register_handlers(app):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("approvals", approvals_cmd))
+    app.add_handler(CallbackQueryHandler(on_approval_button, pattern=r"^(approve|reject):\d+$"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_media))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_media))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
