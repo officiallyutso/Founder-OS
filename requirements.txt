@@ -17,6 +17,7 @@ rank-bm25==0.2.2
 fpdf2==2.7.9
 gTTS==2.5.1
 matplotlib==3.8.4
+flask==3.0.3
 
 # Dev / testing
 pytest==8.2.0

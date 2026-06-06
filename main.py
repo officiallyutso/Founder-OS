@@ -35,6 +35,13 @@ def main():
     register_handlers(app)
     start_scheduler(app)
 
+    if config.dashboard_enabled:
+        try:
+            from dashboard.app import start_in_thread
+            start_in_thread()
+        except Exception as e:
+            logger.warning(f"Dashboard failed to start: {e}")
+
     logger.info("Bot is running. Send a message on Telegram to start.")
     app.run_polling(drop_pending_updates=True)
 

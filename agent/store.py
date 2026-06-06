@@ -540,5 +540,24 @@ def log_action(actor: str, tool_name: str, args: dict, result: str):
         pass
 
 
+def recent_actions(limit: int = 15) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT actor, tool_name, substr(result,1,160) AS result, created_at "
+        "FROM action_log ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def usage_history(days: int = 7) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM usage_daily ORDER BY day DESC LIMIT ?", (days,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # Initialize on import.
 init_agent_db()
