@@ -49,6 +49,36 @@ async def check_email_replies():
 
 
 @register(
+    name="check_replies_now",
+    description="Run the email reply-tracking loop right now: scan the inbox for new replies "
+                "from CRM contacts, log them, mark contacts as responded, draft a suggested "
+                "reply for each, and surface it on Telegram with Approve/Reject buttons (or "
+                "auto-send if autonomy is high). Use when the founder asks to check for replies "
+                "or 'any responses to my outreach?'.",
+    parameters={"type": "object", "properties": {}},
+    category="perception",
+)
+async def check_replies_now():
+    from agent import reply_loop
+    res = await reply_loop.process_replies(notify=True)
+    if not res.get("configured"):
+        return res
+    n = res.get("processed", 0)
+    if not n:
+        return {"new_replies": 0, "note": "No new replies from CRM contacts since last check."}
+    return {
+        "new_replies": n,
+        "handled": [
+            {"contact": r["contact"], "company": r["company"],
+             "auto_sent": r["auto_sent"],
+             "queued_approval_id": r["approval_id"]}
+            for r in res.get("replies", [])
+        ],
+        "note": "Each reply was logged; a suggested response was drafted and sent to Telegram.",
+    }
+
+
+@register(
     name="browse_page",
     description="Open a web page in a real headless browser and return its rendered text. "
                 "Use for JavaScript-heavy pages where plain scraping fails.",

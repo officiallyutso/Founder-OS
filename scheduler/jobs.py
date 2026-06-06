@@ -54,6 +54,30 @@ async def send_voice_to_user(path: str, caption: str = "") -> bool:
         return False
 
 
+async def send_approval_to_user(approval_id: int, text: str) -> bool:
+    """Surface a pending approval with one-tap Approve / Reject inline buttons."""
+    from config import config
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    if not (_bot_app and config.my_telegram_user_id):
+        return False
+    chat = config.my_telegram_user_id
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approve & send", callback_data=f"approve:{approval_id}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"reject:{approval_id}"),
+    ]])
+    try:
+        await _bot_app.bot.send_message(
+            chat_id=chat, text=text[:4000], reply_markup=kb, parse_mode="Markdown")
+        return True
+    except Exception:
+        try:
+            await _bot_app.bot.send_message(chat_id=chat, text=text[:4000], reply_markup=kb)
+            return True
+        except Exception as e:
+            logger.error(f"Approval send failed: {e}")
+            return False
+
+
 async def send_photo_to_user(path: str, caption: str = "") -> bool:
     """Deliver an image (e.g. a rendered chart) to the founder on Telegram."""
     from config import config
@@ -198,20 +222,14 @@ async def job_check_monitors():
 async def job_check_inbox():
     if _paused():
         return
-    logger.info("[Scheduler] Checking inbox for replies")
+    logger.info("[Scheduler] Reply-tracking loop")
     try:
-        from integrations import email_reader
-        if not email_reader.is_configured():
-            return
-        from agent.tools.perception_tools import check_email_replies
-        matches = await check_email_replies()
-        if isinstance(matches, list) and matches:
-            lines = [f"📬 *{len(matches)} reply(ies) from CRM contacts:*"]
-            for m in matches[:5]:
-                lines.append(f"• *{m.get('contact')}* ({m.get('company','?')}): {m.get('subject','')}")
-            await send_to_user("\n".join(lines))
+        from agent import reply_loop
+        res = await reply_loop.process_replies(notify=True)
+        if res.get("processed"):
+            logger.info(f"[Scheduler] Reply loop handled {res['processed']} new reply(ies).")
     except Exception as e:
-        logger.error(f"Inbox check failed: {e}")
+        logger.error(f"Reply loop failed: {e}")
 
 
 async def job_consolidate_memory():

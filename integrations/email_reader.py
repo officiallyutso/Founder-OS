@@ -70,10 +70,12 @@ def fetch_recent(limit: int = 10, unread_only: bool = False) -> list:
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
             out.append({
+                "message_id": (msg.get("Message-ID") or "").strip(),
                 "from": _decode(msg.get("From")),
                 "subject": _decode(msg.get("Subject")),
                 "date": msg.get("Date", ""),
                 "snippet": _body_snippet(msg),
+                "body": _body_snippet(msg, limit=2500),
             })
         M.logout()
         return out

@@ -128,6 +128,11 @@ def init_agent_db():
             note TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS seen_emails (
+            msg_key TEXT PRIMARY KEY,          -- Message-ID (or synthetic key)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
     # Migrate older usage_daily rows that predate token/cost columns.
@@ -523,6 +528,26 @@ def finance_history(limit: int = 12) -> list:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── SEEN EMAILS (reply-loop dedupe) ───────────────────────────────────────────
+
+def email_seen(msg_key: str) -> bool:
+    if not msg_key:
+        return False
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM seen_emails WHERE msg_key = ?", (msg_key,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def mark_email_seen(msg_key: str):
+    if not msg_key:
+        return
+    conn = get_conn()
+    conn.execute("INSERT OR IGNORE INTO seen_emails (msg_key) VALUES (?)", (msg_key,))
+    conn.commit()
+    conn.close()
 
 
 # ── ACTION LOG ────────────────────────────────────────────────────────────────

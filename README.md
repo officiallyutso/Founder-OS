@@ -15,7 +15,7 @@
 > looks after your goals — all behind a human approval gate for anything risky.
 
 Founder OS is not a chatbot. It is an **autonomous agent**: you tell it an outcome, and
-it decides which of its **72 tools** to call, chains them, verifies its own work, and
+it decides which of its **73 tools** to call, chains them, verifies its own work, and
 gets things done — then quietly improves itself for next time.
 
 ---
@@ -42,7 +42,7 @@ gets things done — then quietly improves itself for next time.
 5. [Quickstart & setup](#5-quickstart--setup)
 6. [Configuration reference (.env)](#6-configuration-reference-env)
 7. [The agentic core in depth](#7-the-agentic-core-in-depth)
-8. [The complete tool catalog (72 tools)](#8-the-complete-tool-catalog-72-tools)
+8. [The complete tool catalog (73 tools)](#8-the-complete-tool-catalog-73-tools)
 9. [The memory brain](#9-the-memory-brain)
 10. [Self-evolution](#10-self-evolution)
 11. [Multi-agent orchestration](#11-multi-agent-orchestration)
@@ -164,7 +164,7 @@ flowchart TD
     policy --> approvals["Approval Gate (agent/approvals.py)"]
     policy --> registry["Tool + Skill Registry (agent/registry.py)"]
 
-    registry --> tools["72 Tools (agent/tools/*)"]
+    registry --> tools["73 Tools (agent/tools/*)"]
     loop --> subagents["Specialist Sub-agents (agent/subagent.py)"]
 
     tools --> brain[("Memory Brain")]
@@ -202,7 +202,7 @@ flowchart LR
         EVO["Self-evolution"]
     end
     subgraph Capabilities
-        REG["Tool Registry (72)"]
+        REG["Tool Registry (73)"]
         SKILLS["Self-authored tools"]
         OPT["Strategy optimizer"]
     end
@@ -548,13 +548,13 @@ manual and re-injected forever after.
 
 ---
 
-## 8. The complete tool catalog (72 tools)
+## 8. The complete tool catalog (73 tools)
 
 Tools are grouped by `category`. **🔒 = approval-gated** (won't run until you approve,
 unless `AUTONOMY_LEVEL=autonomous` / `AUTO_APPROVE=true`). Sub-agents receive only the
 categories relevant to their role (plus `memory`, which is always available).
 
-> Counts: **memory 8 · crm 6 · research 8 · outreach 3 · social 3 · reminders 3 · tasks 12 · goals 3 · calendar 3 · perception 6 · evolution 7 · meta 6 · orchestration 2 · finance 2 = 72**
+> Counts: **memory 8 · crm 6 · research 8 · outreach 3 · social 3 · reminders 3 · tasks 12 · goals 3 · calendar 3 · perception 7 · evolution 7 · meta 6 · orchestration 2 · finance 2 = 73**
 
 ### 8.1 `memory` (8)
 
@@ -656,6 +656,7 @@ categories relevant to their role (plus `memory`, which is always available).
 |---|:--:|---|
 | `read_inbox` | — | Read recent inbox emails (IMAP, **doesn't** mark them read). |
 | `check_email_replies` | — | Read inbox and match senders to CRM contacts to spot replies. |
+| `check_replies_now` | — | Run the full reply-tracking loop: detect new replies, log them, mark contacts responded, draft + surface a reply (buttons or auto-send), keep follow-ups. |
 | `browse_page` | — | Open a page in a real headless browser and return rendered text (JS-heavy pages). |
 | `add_monitor` | — | Watch a topic; the scheduler alerts you when genuinely new results appear. |
 | `list_monitors` | — | List active topic monitors. |
@@ -1101,7 +1102,7 @@ FOUDNER_OS/
 │   ├── budget.py                # Spend cap, kill switch, cost tracking
 │   ├── trace.py                 # Per-turn flight recorder
 │   ├── store.py                 # Agent SQLite tables + accessors
-│   └── tools/                   # 72 tools across categories
+│   └── tools/                   # 73 tools across categories
 │       ├── __init__.py          # Imports all tool modules (registration) + loads generated
 │       ├── memory_tools.py      ├── brain_tools.py      ├── world_tools.py
 │       ├── crm_tools.py         ├── research_tools.py   ├── outreach_tools.py
@@ -1197,7 +1198,7 @@ you want; the agent picks the tools.
 ### 22.1 Fast local checks (no Telegram)
 
 ```bash
-# All modules import + all 72 tools register
+# All modules import + all 73 tools register
 python -c "import agent.tools, agent.core, scheduler.jobs, bot.handlers; from agent import registry; print('OK -', len(registry.all_tools()), 'tools')"
 
 # Behavior regression (side-effect-free)
@@ -1485,10 +1486,11 @@ Built incrementally, one commit per phase:
 | `feat: agent self-knowledge` | `about_self` tool + system-prompt origin line crediting builder **Utso (@officiallyutso)**. |
 | `feat: charts` | `generate_chart` (bar/line/pie) + chart embedding in PDFs via matplotlib. |
 | `feat: local web dashboard` | Flask control panel on `localhost:8787` (`DASHBOARD_*`) showing snapshot, runway, usage, approvals, traces. |
+| `feat: email reply-tracking loop` | Auto-detects replies from CRM contacts (`seen_emails` dedupe), logs them, marks the contact **responded**, drafts a suggested reply, and surfaces it on Telegram with one-tap Approve/Reject (or auto-sends when autonomy is high) while keeping a 3-day follow-up scheduled; `check_replies_now` tool + repurposed inbox job. |
 
 ---
 
-## Appendix A — Full tool reference (all 72)
+## Appendix A — Full tool reference (all 73)
 
 Every tool below shows its **category**, whether it is **approval-gated**, its
 **parameters**, what it **returns**, an example **natural-language trigger** (what you'd
@@ -1928,6 +1930,15 @@ Create a `.md`/`.txt` document and deliver it to the founder on Telegram (notes/
 
 #### `check_email_replies` — `cat: perception`
 Read inbox and match senders to CRM contacts. **No params.** Returns matches `{contact, company, subject, snippet}`.
+
+#### `check_replies_now` — `cat: perception`
+Run the full **reply-tracking loop** on demand. **No params.** For each *new* reply from a CRM
+contact it: dedupes via `seen_emails`, logs the inbound message against the contact, marks the
+contact **responded**, schedules a 3-day follow-up, drafts a suggested reply with the LLM, and
+surfaces it on Telegram — either with one-tap ✅/❌ buttons (balanced/cautious autonomy) or
+auto-sent (when `AUTO_APPROVE=true` or `AUTONOMY_LEVEL=autonomous`). Also runs automatically every
+hour (09:00–21:00) via the `check_inbox` scheduler job. Returns `{new_replies, handled[...]}`.
+Triggers: *"any replies to my outreach?"*, *"check my email for responses"*.
 
 #### `browse_page` — `cat: perception`
 
