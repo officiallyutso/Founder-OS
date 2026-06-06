@@ -110,6 +110,12 @@ def init_agent_db():
             active INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS usage_daily (
+            day TEXT PRIMARY KEY,              -- YYYY-MM-DD
+            llm_calls INTEGER DEFAULT 0,
+            tool_calls INTEGER DEFAULT 0
+        );
         """
     )
     conn.commit()
@@ -433,6 +439,33 @@ def mark_monitor_seen(monitor_id: int, urls: list):
     conn.execute("UPDATE monitors SET seen_urls = ? WHERE id = ?", (merged, monitor_id))
     conn.commit()
     conn.close()
+
+
+# ── USAGE / BUDGET ────────────────────────────────────────────────────────────
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def incr_usage(llm: int = 0, tools: int = 0):
+    day = _today()
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO usage_daily (day, llm_calls, tool_calls) VALUES (?, ?, ?)
+           ON CONFLICT(day) DO UPDATE SET
+             llm_calls = llm_calls + ?, tool_calls = tool_calls + ?""",
+        (day, llm, tools, llm, tools),
+    )
+    conn.commit()
+    conn.close()
+
+
+def usage_today() -> dict:
+    day = _today()
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM usage_daily WHERE day = ?", (day,)).fetchone()
+    conn.close()
+    return dict(row) if row else {"day": day, "llm_calls": 0, "tool_calls": 0}
 
 
 # ── ACTION LOG ────────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ from agent.tools import (  # noqa: F401
     optimizer_tools,
     perception_tools,
     orchestration_tools,
+    project_tools,
 )
 
 # Load any tools the agent authored for itself in past sessions.

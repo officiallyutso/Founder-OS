@@ -22,6 +22,9 @@ class Config:
     # Autonomy / agent
     auto_approve: bool
     heartbeat_hours: int
+    autonomy_level: str          # cautious | balanced | autonomous
+    daily_llm_call_cap: int      # 0 = unlimited
+    agent_paused: bool           # kill switch
     # Google Calendar (optional)
     google_credentials_path: str
     google_token_path: str
@@ -70,6 +73,9 @@ def load_config() -> Config:
         my_one_liner=os.getenv("MY_ONE_LINER", ""),
         auto_approve=os.getenv("AUTO_APPROVE", "false").strip().lower() in ("1", "true", "yes", "on"),
         heartbeat_hours=int(os.getenv("HEARTBEAT_HOURS", "4") or "4"),
+        autonomy_level=os.getenv("AUTONOMY_LEVEL", "balanced").strip().lower(),
+        daily_llm_call_cap=int(os.getenv("DAILY_LLM_CALL_CAP", "0") or "0"),
+        agent_paused=os.getenv("AGENT_PAUSED", "false").strip().lower() in ("1", "true", "yes", "on"),
         google_credentials_path=os.getenv("GOOGLE_CREDENTIALS_PATH", "./data/google_credentials.json"),
         google_token_path=os.getenv("GOOGLE_TOKEN_PATH", "./data/google_token.json"),
         x_api_key=os.getenv("X_API_KEY", ""),

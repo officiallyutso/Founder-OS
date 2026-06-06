@@ -19,6 +19,10 @@ CLIENTS = {
 }
 
 async def complete(messages: list, task_type: str = "general", max_tokens: int = 2048) -> str:
+    from agent import budget
+    budget.check_before_call()  # raises BudgetError if paused / over cap
+    budget.note_call()
+
     chain = ROUTING.get(task_type, ROUTING["general"])
     last_error = None
 

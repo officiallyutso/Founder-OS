@@ -117,7 +117,14 @@ def load_pending_reminders():
 
 # ── HEARTBEAT (proactivity) ───────────────────────────────────────────────────
 
+def _paused() -> bool:
+    from config import config
+    return config.agent_paused
+
+
 async def job_check_monitors():
+    if _paused():
+        return
     logger.info("[Scheduler] Checking topic monitors")
     try:
         from tools.web_search import search as web_search
@@ -136,6 +143,8 @@ async def job_check_monitors():
 
 
 async def job_check_inbox():
+    if _paused():
+        return
     logger.info("[Scheduler] Checking inbox for replies")
     try:
         from integrations import email_reader
@@ -162,6 +171,8 @@ async def job_consolidate_memory():
 
 
 async def job_heartbeat():
+    if _paused():
+        return
     logger.info("[Scheduler] Heartbeat")
     from agent import core
     prompt = (

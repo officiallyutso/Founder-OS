@@ -7,10 +7,9 @@ whatever tool subset they're given.
 import json
 import logging
 
-from agent import registry, approvals, critic
+from agent import registry, approvals, critic, policy, safety
 from agent.store import log_action
 from llm.tool_client import complete_with_tools
-from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +46,22 @@ async def execute_loop(messages: list, schemas: list, actor: str = "agent",
 
             if tool is None:
                 result = {"error": f"Unknown tool: {name}"}
-            elif tool.requires_approval and not config.auto_approve:
-                check = await critic.precheck_action(name, args)
-                note = "" if check.get("ok", True) else check.get("note", "")
-                result = approvals.enqueue(name, args, risk_note=note)
             else:
-                result = await registry.call(name, args)
-                log_action(actor, name, args, json.dumps(result, default=str)[:1500])
+                decision = policy.decide(tool, args)
+                if decision == "deny":
+                    result = {"denied": f"Policy blocked '{name}'."}
+                elif decision == "approve":
+                    check = await critic.precheck_action(name, args)
+                    note = "" if check.get("ok", True) else check.get("note", "")
+                    result = approvals.enqueue(name, args, risk_note=note)
+                else:
+                    result = await registry.call(name, args)
+                    log_action(actor, name, args, json.dumps(result, default=str)[:1500])
+                    result = safety.wrap_tool_result(name, result)
 
             messages.append({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": json.dumps(result, default=str)[:6000],
+                "content": json.dumps(result, default=str)[:6500],
             })
     return "I did a lot of work but didn't wrap up cleanly. Ask me to continue."

@@ -85,6 +85,10 @@ async def complete_with_tools(messages: list, tools: list, max_tokens: int = 150
     if not chain:
         raise RuntimeError("No tool-calling provider configured (need GROQ_API_KEY or OPENAI_API_KEY).")
 
+    from agent import budget
+    budget.check_before_call()  # raises BudgetError if paused / over cap
+    budget.note_call()
+
     last_error = None
     for provider, getter, model in chain:
         client = getter()
