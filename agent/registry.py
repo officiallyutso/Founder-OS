@@ -59,6 +59,12 @@ def all_schemas() -> list:
     return [t.schema() for t in _TOOLS.values()]
 
 
+def schemas_for(categories) -> list:
+    """Schemas for tools whose category is in `categories` (plus 'memory' always)."""
+    allowed = set(categories) | {"memory"}
+    return [t.schema() for t in _TOOLS.values() if t.category in allowed]
+
+
 async def call(name: str, args: dict):
     """Execute a tool by name. Handles sync + async callables."""
     tool = _TOOLS.get(name)

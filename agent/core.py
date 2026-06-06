@@ -10,16 +10,14 @@ import asyncio
 import json
 import logging
 
-from agent import registry, identity, evolution, approvals, planner, critic
+from agent import registry, identity, evolution, planner, critic
+from agent.loop import execute_loop
 import agent.tools  # noqa: F401 — importing registers every tool
-from agent.store import log_action, set_plan_status
-from llm.tool_client import complete_with_tools
+from agent.store import set_plan_status
 from memory.vector_store import add as vec_add, search_all
-from config import config
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 8
 HISTORY_TURNS = 8  # how many prior (user/assistant) messages to carry
 
 # Single authorized user → a module-level rolling transcript is fine.
@@ -34,51 +32,6 @@ def _memory_context(message: str) -> str:
     if not hits:
         return ""
     return "\n".join(f"- [{h['collection']}] {h['text'][:200]}" for h in hits)
-
-
-async def _execute_loop(messages: list, schemas: list, actor: str, on_status,
-                        tools_used: list, max_steps: int = MAX_STEPS) -> str:
-    """Run the tool-calling loop until the model returns a final answer."""
-    final_text = ""
-    for _ in range(max_steps):
-        try:
-            resp = await complete_with_tools(messages, schemas)
-        except Exception as e:
-            logger.error(f"[core] LLM call failed: {e}")
-            return f"⚠️ My reasoning engine hit an error: {str(e)[:200]}"
-
-        messages.append(resp["raw"])
-        calls = resp.get("tool_calls") or []
-        if not calls:
-            return (resp.get("content") or "").strip()
-
-        for tc in calls:
-            name, args, call_id = tc["name"], tc["arguments"], tc["id"]
-            tools_used.append(name)
-            tool = registry.get(name)
-
-            if on_status:
-                try:
-                    await on_status(f"⚙️ {name}…")
-                except Exception:
-                    pass
-
-            if tool is None:
-                result = {"error": f"Unknown tool: {name}"}
-            elif tool.requires_approval and not config.auto_approve:
-                check = await critic.precheck_action(name, args)
-                note = "" if check.get("ok", True) else check.get("note", "")
-                result = approvals.enqueue(name, args, risk_note=note)
-            else:
-                result = await registry.call(name, args)
-                log_action(actor, name, args, json.dumps(result, default=str)[:1500])
-
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": json.dumps(result, default=str)[:6000],
-            })
-    return final_text or "I did a lot of work but didn't wrap up cleanly. Ask me to continue."
 
 
 async def run(user_message: str, image_context: str = "", actor: str = "user",
@@ -124,7 +77,7 @@ async def run(user_message: str, image_context: str = "", actor: str = "user",
     tools_used = []
 
     # ── EXECUTE ────────────────────────────────────────────────────────────────
-    final_text = await _execute_loop(messages, schemas, actor, on_status, tools_used)
+    final_text = await execute_loop(messages, schemas, actor, on_status, tools_used)
 
     # ── VERIFY + one refinement (only for deliberate turns) ────────────────────
     if deliberate and final_text and not final_text.startswith("⚠️"):
@@ -141,8 +94,8 @@ async def run(user_message: str, image_context: str = "", actor: str = "user",
                 messages.append({"role": "user", "content":
                                  f"[SELF-CHECK] Problem found: {check.get('issues','')}. "
                                  f"{check.get('suggestion','')} Now give me the corrected final reply."})
-                final_text = await _execute_loop(messages, schemas, actor, on_status,
-                                                 tools_used, max_steps=3)
+                final_text = await execute_loop(messages, schemas, actor, on_status,
+                                                tools_used, max_steps=3)
         except Exception as e:
             logger.debug(f"[core] verify skipped: {e}")
 
