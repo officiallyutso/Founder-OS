@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Lazy singletons.
 _groq = None
 _openai = None
+_ollama = None
 
 
 def _get_groq():
@@ -40,6 +41,14 @@ def _get_openai():
     return _openai
 
 
+def _get_ollama():
+    global _ollama
+    if _ollama is None and config.ollama_enabled:
+        from openai import AsyncOpenAI
+        _ollama = AsyncOpenAI(base_url=config.ollama_base_url, api_key="ollama")
+    return _ollama
+
+
 # Provider chain for tool calling: (name, client_getter, model).
 def _chain():
     chain = []
@@ -47,6 +56,9 @@ def _chain():
         chain.append(("groq", _get_groq, "llama-3.3-70b-versatile"))
     if config.openai_api_key:
         chain.append(("openai", _get_openai, "gpt-4o-mini"))
+    if config.ollama_enabled:
+        # Local fallback for tool calling (model must support tools, e.g. llama3.1).
+        chain.append(("ollama", _get_ollama, config.ollama_model))
     return chain
 
 

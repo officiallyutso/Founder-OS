@@ -25,6 +25,13 @@ class Config:
     autonomy_level: str          # cautious | balanced | autonomous
     daily_llm_call_cap: int      # 0 = unlimited
     agent_paused: bool           # kill switch
+
+    # Local model (Ollama) + caching
+    ollama_enabled: bool
+    ollama_base_url: str
+    ollama_model: str
+    semantic_cache: bool
+    cache_distance_threshold: float
     # Google Calendar (optional)
     google_credentials_path: str
     google_token_path: str
@@ -76,6 +83,11 @@ def load_config() -> Config:
         autonomy_level=os.getenv("AUTONOMY_LEVEL", "balanced").strip().lower(),
         daily_llm_call_cap=int(os.getenv("DAILY_LLM_CALL_CAP", "0") or "0"),
         agent_paused=os.getenv("AGENT_PAUSED", "false").strip().lower() in ("1", "true", "yes", "on"),
+        ollama_enabled=os.getenv("OLLAMA_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"),
+        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1").strip(),
+        ollama_model=os.getenv("OLLAMA_MODEL", "llama3.1").strip(),
+        semantic_cache=os.getenv("SEMANTIC_CACHE", "true").strip().lower() in ("1", "true", "yes", "on"),
+        cache_distance_threshold=float(os.getenv("CACHE_DISTANCE_THRESHOLD", "0.08") or "0.08"),
         google_credentials_path=os.getenv("GOOGLE_CREDENTIALS_PATH", "./data/google_credentials.json"),
         google_token_path=os.getenv("GOOGLE_TOKEN_PATH", "./data/google_token.json"),
         x_api_key=os.getenv("X_API_KEY", ""),
