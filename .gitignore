@@ -12,3 +12,5 @@ build/
 venv/
 *.log
 .DS_Store
+*.plan.md
+.git/COMMIT_MSG.txt

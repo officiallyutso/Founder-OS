@@ -24,8 +24,10 @@ def _summarize(tool_name: str, args: dict) -> str:
     return f"{tool_name}({json.dumps(args)[:160]})"
 
 
-def enqueue(tool_name: str, args: dict) -> dict:
+def enqueue(tool_name: str, args: dict, risk_note: str = "") -> dict:
     summary = _summarize(tool_name, args)
+    if risk_note:
+        summary = f"{summary}\n   ⚠️ {risk_note}"
     aid = store.create_approval(tool_name, args, summary)
     return {
         "status": "pending_approval",

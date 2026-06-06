@@ -72,6 +72,26 @@ def init_agent_db():
             result TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            goal TEXT NOT NULL,
+            rationale TEXT,
+            status TEXT DEFAULT 'open',        -- open | done | abandoned
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS subtasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id INTEGER REFERENCES plans(id),
+            seq INTEGER,
+            description TEXT NOT NULL,
+            depends_on TEXT,                   -- comma-separated subtask seqs
+            status TEXT DEFAULT 'pending',     -- pending | done | skipped
+            result TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
     conn.commit()
@@ -251,6 +271,72 @@ def set_approval_status(approval_id: int, status: str, result: str = None):
     conn.execute(
         "UPDATE approvals SET status = ?, result = ?, decided_at = ? WHERE id = ?",
         (status, result, datetime.now().isoformat(), approval_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── PLANS / SUBTASKS ──────────────────────────────────────────────────────────
+
+def create_plan(goal: str, rationale: str, steps: list) -> int:
+    """Persist a plan and its ordered subtasks. `steps` is a list of dicts or strings."""
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO plans (goal, rationale) VALUES (?, ?)", (goal, rationale)
+    )
+    plan_id = cur.lastrowid
+    for i, step in enumerate(steps):
+        if isinstance(step, dict):
+            desc = step.get("description") or step.get("step") or str(step)
+            depends = ",".join(str(d) for d in (step.get("depends_on") or []))
+        else:
+            desc, depends = str(step), ""
+        conn.execute(
+            "INSERT INTO subtasks (plan_id, seq, description, depends_on) VALUES (?, ?, ?, ?)",
+            (plan_id, i, desc, depends),
+        )
+    conn.commit()
+    conn.close()
+    return plan_id
+
+
+def get_plan(plan_id: int) -> Optional[dict]:
+    conn = get_conn()
+    p = conn.execute("SELECT * FROM plans WHERE id = ?", (plan_id,)).fetchone()
+    if not p:
+        conn.close()
+        return None
+    subs = conn.execute(
+        "SELECT * FROM subtasks WHERE plan_id = ? ORDER BY seq ASC", (plan_id,)
+    ).fetchall()
+    conn.close()
+    return {**dict(p), "subtasks": [dict(s) for s in subs]}
+
+
+def list_open_plans() -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM plans WHERE status = 'open' ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_subtask(subtask_id: int, status: str, result: str = None):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE subtasks SET status = ?, result = ? WHERE id = ?",
+        (status, result, subtask_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_plan_status(plan_id: int, status: str):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE plans SET status = ?, updated_at = ? WHERE id = ?",
+        (status, datetime.now().isoformat(), plan_id),
     )
     conn.commit()
     conn.close()
