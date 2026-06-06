@@ -102,6 +102,14 @@ def init_agent_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(grp, variant)
         );
+
+        CREATE TABLE IF NOT EXISTS monitors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,               -- search topic to watch
+            seen_urls TEXT DEFAULT '',         -- newline-joined URLs already reported
+            active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
     conn.commit()
@@ -387,6 +395,44 @@ def all_strategies(limit: int = 20) -> list:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── MONITORS ──────────────────────────────────────────────────────────────────
+
+def add_monitor(topic: str) -> int:
+    conn = get_conn()
+    cur = conn.execute("INSERT INTO monitors (topic) VALUES (?)", (topic,))
+    conn.commit()
+    mid = cur.lastrowid
+    conn.close()
+    return mid
+
+
+def list_monitors(active_only: bool = True) -> list:
+    conn = get_conn()
+    if active_only:
+        rows = conn.execute("SELECT * FROM monitors WHERE active = 1 ORDER BY created_at DESC").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM monitors ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def deactivate_monitor(monitor_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE monitors SET active = 0 WHERE id = ?", (monitor_id,))
+    conn.commit()
+    conn.close()
+
+
+def mark_monitor_seen(monitor_id: int, urls: list):
+    conn = get_conn()
+    row = conn.execute("SELECT seen_urls FROM monitors WHERE id = ?", (monitor_id,)).fetchone()
+    existing = (row["seen_urls"] if row else "") or ""
+    merged = "\n".join(filter(None, existing.split("\n") + list(urls)))
+    conn.execute("UPDATE monitors SET seen_urls = ? WHERE id = ?", (merged, monitor_id))
+    conn.commit()
+    conn.close()
 
 
 # ── ACTION LOG ────────────────────────────────────────────────────────────────

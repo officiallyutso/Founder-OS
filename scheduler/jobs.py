@@ -117,6 +117,41 @@ def load_pending_reminders():
 
 # ── HEARTBEAT (proactivity) ───────────────────────────────────────────────────
 
+async def job_check_monitors():
+    logger.info("[Scheduler] Checking topic monitors")
+    try:
+        from tools.web_search import search as web_search
+        for m in store.list_monitors():
+            results = web_search(m["topic"], num_results=5)
+            seen = set((m.get("seen_urls") or "").split("\n"))
+            fresh = [r for r in results if r.get("url") and r["url"] not in seen]
+            if fresh:
+                store.mark_monitor_seen(m["id"], [r["url"] for r in fresh])
+                lines = [f"📡 *New on '{m['topic']}':*"]
+                for r in fresh[:4]:
+                    lines.append(f"• {r.get('title','')}\n{r.get('url','')}")
+                await send_to_user("\n".join(lines))
+    except Exception as e:
+        logger.error(f"Monitor check failed: {e}")
+
+
+async def job_check_inbox():
+    logger.info("[Scheduler] Checking inbox for replies")
+    try:
+        from integrations import email_reader
+        if not email_reader.is_configured():
+            return
+        from agent.tools.perception_tools import check_email_replies
+        matches = await check_email_replies()
+        if isinstance(matches, list) and matches:
+            lines = [f"📬 *{len(matches)} reply(ies) from CRM contacts:*"]
+            for m in matches[:5]:
+                lines.append(f"• *{m.get('contact')}* ({m.get('company','?')}): {m.get('subject','')}")
+            await send_to_user("\n".join(lines))
+    except Exception as e:
+        logger.error(f"Inbox check failed: {e}")
+
+
 async def job_consolidate_memory():
     logger.info("[Scheduler] Nightly memory consolidation")
     try:
@@ -155,6 +190,8 @@ def start_scheduler(app) -> AsyncIOScheduler:
     _scheduler.add_job(job_daily_briefing, CronTrigger(hour=8, minute=0), id="daily_briefing")
     _scheduler.add_job(job_followup_reminder, CronTrigger(hour=10, minute=0), id="followup_reminder")
     _scheduler.add_job(job_consolidate_memory, CronTrigger(hour=3, minute=0), id="consolidate_memory")
+    _scheduler.add_job(job_check_monitors, CronTrigger(hour="9,15,20", minute=30), id="check_monitors")
+    _scheduler.add_job(job_check_inbox, CronTrigger(hour="9-21", minute=15), id="check_inbox")
 
     hours = max(1, int(getattr(config, "heartbeat_hours", 4) or 4))
     _scheduler.add_job(

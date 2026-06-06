@@ -18,6 +18,7 @@ from agent.tools import (  # noqa: F401
     evolution_tools,
     meta_tools,
     optimizer_tools,
+    perception_tools,
 )
 
 # Load any tools the agent authored for itself in past sessions.

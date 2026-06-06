@@ -26,3 +26,12 @@ google-auth==2.29.0
 google-auth-oauthlib==1.2.0
 # X / Twitter
 tweepy==4.14.0
+
+# Perception (all optional; imported lazily, bot runs without them):
+# Headless browser automation
+# playwright==1.43.0        # then: python -m playwright install chromium
+# Local voice transcription (needs ffmpeg available)
+# faster-whisper==1.0.1
+# Document parsing (PDF / DOCX)
+# pypdf==4.2.0
+# python-docx==1.1.0

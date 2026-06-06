@@ -105,13 +105,63 @@ async def handle_media(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             response = await core.run(caption or "(image attached)", image_context=description,
                                       on_status=_status_callback(update, ctx))
         else:
-            text = f"Received a document '{filename}' (type: {mime}). Caption: {caption or '(none)'}"
+            # Extract text from PDFs / docx / text docs and feed it to the agent.
+            from integrations import documents
+            tg_file = await ctx.bot.get_file(file_id)
+            raw = await tg_file.download_as_bytearray()
+            extracted = documents.extract_text(bytes(raw), mime=mime, filename=filename)
+            text = f"The founder shared a document '{filename}'. Caption: {caption or '(none)'}."
+            if extracted:
+                text += f"\n\n[DOCUMENT CONTENT]\n{extracted}"
             response = await core.run(text, on_status=_status_callback(update, ctx))
 
         await _send_reply(update, response)
     except Exception as e:
         logger.error(f"Media handler error: {e}")
         await update.message.reply_text(f"⚠️ Couldn't process that attachment: {str(e)[:200]}")
+
+
+async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Transcribe a voice note locally, then run it through the agent."""
+    if not is_authorized(update.effective_user.id):
+        return
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    msg = update.message
+    media = msg.voice or msg.audio
+    if not media:
+        return
+    try:
+        from integrations import transcribe
+        if not transcribe.available():
+            await update.message.reply_text(
+                "🎙 Voice transcription isn't installed. Run `pip install faster-whisper` "
+                "(and have ffmpeg available), or just type your message.")
+            return
+
+        import tempfile, os
+        tg_file = await ctx.bot.get_file(media.file_id)
+        raw = await tg_file.download_as_bytearray()
+        suffix = ".ogg" if msg.voice else ".mp3"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+            tf.write(bytes(raw))
+            tmp_path = tf.name
+        try:
+            text = transcribe.transcribe_file(tmp_path)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+        if not text:
+            await update.message.reply_text("I couldn't transcribe that. Mind typing it?")
+            return
+        await update.message.reply_text(f"🎙 _heard:_ {text[:200]}", parse_mode="Markdown")
+        response = await core.run(text, on_status=_status_callback(update, ctx))
+        await _send_reply(update, response)
+    except Exception as e:
+        logger.error(f"Voice handler error: {e}")
+        await update.message.reply_text(f"⚠️ Voice error: {str(e)[:200]}")
 
 
 async def _send_reply(update: Update, response: str):
@@ -127,4 +177,5 @@ def register_handlers(app):
     app.add_handler(CommandHandler("approvals", approvals_cmd))
     app.add_handler(MessageHandler(filters.PHOTO, handle_media))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_media))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
