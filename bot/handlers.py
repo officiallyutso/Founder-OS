@@ -238,9 +238,41 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         response = await core.run(text, on_status=_status_callback(update, ctx))
         await _send_reply(update, response)
         await _notify_new_approvals(update, before)
+        await _maybe_speak(update, response)
     except Exception as e:
         logger.error(f"Voice handler error: {e}")
         await update.message.reply_text(f"⚠️ Voice error: {str(e)[:200]}")
+
+
+async def _maybe_speak(update: Update, response: str):
+    """If the founder messaged by voice, reply with a spoken clip too (best-effort)."""
+    from config import config
+    if not getattr(config, "voice_replies", True):
+        return
+    from integrations import tts
+    if not tts.available():
+        return
+    import tempfile, os
+    voice_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as af:
+            voice_path = af.name
+        if not tts.synthesize(response, voice_path):
+            return
+        with open(voice_path, "rb") as vf:
+            try:
+                await update.message.reply_voice(vf)
+            except Exception:
+                vf.seek(0)
+                await update.message.reply_audio(vf)
+    except Exception as e:
+        logger.error(f"voice reply failed: {e}")
+    finally:
+        if voice_path:
+            try:
+                os.remove(voice_path)
+            except OSError:
+                pass
 
 
 async def _send_reply(update: Update, response: str):

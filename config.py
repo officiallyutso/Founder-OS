@@ -23,6 +23,7 @@ class Config:
     auto_approve: bool
     heartbeat_hours: int
     autonomy_level: str          # cautious | balanced | autonomous
+    voice_replies: bool          # speak responses back to voice messages
     daily_llm_call_cap: int      # 0 = unlimited
     agent_paused: bool           # kill switch
 
@@ -81,6 +82,7 @@ def load_config() -> Config:
         auto_approve=os.getenv("AUTO_APPROVE", "false").strip().lower() in ("1", "true", "yes", "on"),
         heartbeat_hours=int(os.getenv("HEARTBEAT_HOURS", "4") or "4"),
         autonomy_level=os.getenv("AUTONOMY_LEVEL", "balanced").strip().lower(),
+        voice_replies=os.getenv("VOICE_REPLIES", "true").strip().lower() in ("1", "true", "yes", "on"),
         daily_llm_call_cap=int(os.getenv("DAILY_LLM_CALL_CAP", "0") or "0"),
         agent_paused=os.getenv("AGENT_PAUSED", "false").strip().lower() in ("1", "true", "yes", "on"),
         ollama_enabled=os.getenv("OLLAMA_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"),
