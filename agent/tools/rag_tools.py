@@ -107,31 +107,31 @@ def ingest_folder(path, recursive=True):
 
 @register(
     name="ask_documents",
-    description="Answer a question from the founder's ingested documents via semantic retrieval. "
-                "Returns the most relevant passages (with source filenames) to ground your answer. "
-                "Use after ingest_file/ingest_folder.",
+    description="Answer a question grounded in the founder's ingested documents using "
+                "Corrective RAG: it retrieves passages, grades their relevance, rewrites and "
+                "re-retrieves if they're weak, and only falls back to the web if nothing fits. "
+                "Returns a synthesized answer with a confidence level and cited source files "
+                "(and says so honestly if the docs don't contain the answer). Use after "
+                "ingest_file/ingest_folder.",
     parameters={
         "type": "object",
         "properties": {
             "question": {"type": "string"},
-            "k": {"type": "integer", "description": "How many passages to retrieve (default 5)."},
+            "k": {"type": "integer", "description": "How many passages to retrieve (default 6)."},
+            "allow_web": {"type": "boolean",
+                          "description": "Fall back to web search if the docs don't answer it (default true)."},
         },
         "required": ["question"],
     },
     category="research",
 )
-def ask_documents(question, k=5):
+async def ask_documents(question, k=6, allow_web=True):
+    from agent import self_rag
     try:
-        k = max(1, min(int(k or 5), 12))
+        k = max(1, min(int(k or 6), 12))
     except (TypeError, ValueError):
-        k = 5
-    hits = vector_store.search("documents", question, n_results=k)
-    if not hits:
-        return {"chunks": [], "note": "No matching documents. Ingest files first with ingest_file/ingest_folder."}
-    return {"chunks": [
-        {"source": (h.get("metadata") or {}).get("source", "?"), "text": h.get("text", "")}
-        for h in hits
-    ]}
+        k = 6
+    return await self_rag.answer(question, k=k, allow_web=bool(allow_web))
 
 
 @register(
