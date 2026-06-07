@@ -18,16 +18,23 @@ _HIGH_STAKES = {"send_email", "x_post", "propose_code_change", "create_tool"}
 
 
 async def verify_answer(goal: str, answer: str, work_summary: str = "") -> dict:
-    """Return {'ok': bool, 'issues': str, 'suggestion': str}."""
+    """Return {'ok', 'issues', 'suggestion', 'confidence', 'clarify'}.
+
+    Besides catching real problems, it estimates how confident/grounded the reply is
+    and, when shaky, proposes a clarifying question — fueling honest abstention.
+    """
     if not answer or len(answer) < 3:
-        return {"ok": True, "issues": "", "suggestion": ""}
+        return {"ok": True, "issues": "", "suggestion": "", "confidence": "high", "clarify": ""}
     messages = [
         {"role": "system", "content":
             "You are the verification module of an autonomous assistant. Judge whether "
             "the DRAFT REPLY actually and accurately satisfies the user's GOAL given the "
             "work done. Flag only real problems: unmet parts of the request, likely "
             "fabrication, contradictions, or clearly wrong tone. Small style nits are NOT "
-            "problems. Respond ONLY with JSON."},
+            "problems. Also estimate how well-grounded the reply is in the work done: "
+            "'high' if clearly supported, 'medium' if partly, 'low' if it looks like a "
+            "guess or relies on facts that weren't verified. If confidence is low, give a "
+            "short clarifying question the assistant should ask the user. Respond ONLY with JSON."},
         {"role": "user", "content": f"""GOAL:
 {goal[:1200]}
 
@@ -38,22 +45,27 @@ DRAFT REPLY:
 {answer[:1800]}
 
 Respond ONLY with JSON:
-{{"ok": true, "issues": "", "suggestion": ""}}
+{{"ok": true, "issues": "", "suggestion": "", "confidence": "high|medium|low", "clarify": ""}}
 Set ok=false only if there is a real, fixable problem; put the problem in 'issues' and a
-concrete fix instruction in 'suggestion'."""},
+concrete fix instruction in 'suggestion'. 'clarify' is only needed when confidence is low."""},
     ]
     try:
-        raw = await complete(messages, task_type="analysis", max_tokens=300)
+        raw = await complete(messages, task_type="analysis", max_tokens=320)
         clean = raw.strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(clean)
+        conf = str(data.get("confidence", "high")).lower()
+        if conf not in ("high", "medium", "low"):
+            conf = "high"
         return {
             "ok": bool(data.get("ok", True)),
             "issues": data.get("issues", ""),
             "suggestion": data.get("suggestion", ""),
+            "confidence": conf,
+            "clarify": data.get("clarify", ""),
         }
     except Exception as e:
         logger.debug(f"[critic] verify_answer skipped: {e}")
-        return {"ok": True, "issues": "", "suggestion": ""}
+        return {"ok": True, "issues": "", "suggestion": "", "confidence": "high", "clarify": ""}
 
 
 async def precheck_action(tool_name: str, args: dict) -> dict:

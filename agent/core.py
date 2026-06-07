@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 
-from agent import registry, identity, evolution, planner, critic, trace, tool_retrieval
+from agent import registry, identity, evolution, planner, critic, trace, tool_retrieval, confidence
 from agent.loop import execute_loop
 import agent.tools  # noqa: F401 — importing registers every tool
 from agent.store import set_plan_status
@@ -116,6 +116,9 @@ async def run(user_message: str, image_context: str = "", actor: str = "user",
                                  f"{check.get('suggestion','')} Now give me the corrected final reply."})
                 final_text = await execute_loop(messages, schemas, actor, on_status,
                                                 tools_used, max_steps=3)
+            # Abstention: surface genuinely low-confidence answers honestly.
+            final_text = confidence.annotate(
+                final_text, check.get("confidence", "high"), check.get("clarify", ""))
         except Exception as e:
             logger.debug(f"[core] verify skipped: {e}")
 
