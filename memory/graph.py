@@ -103,24 +103,71 @@ def add_relation(src_name: str, rel: str, dst_name: str,
     return {"src": src_name, "rel": rel, "dst": dst_name}
 
 
-def neighbors(name: str, limit: int = 25) -> list:
-    """Return relations touching any entity matching `name` (in or out)."""
+def neighbors(name: str, limit: int = 25, by_weight: bool = False) -> list:
+    """Return relations touching any entity matching `name` (in or out).
+
+    Each row includes the relation `weight`. With `by_weight=True` the strongest
+    relations come first (used by fused recall to keep the most salient edges
+    when the output budget is tight).
+    """
     conn = get_conn()
     q = f"%{name}%"
+    order = "ORDER BY r.weight DESC" if by_weight else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT e1.name AS src, e1.type AS src_type, r.rel AS rel,
-               e2.name AS dst, e2.type AS dst_type
+               e2.name AS dst, e2.type AS dst_type, r.weight AS weight
         FROM kg_relations r
         JOIN kg_entities e1 ON r.src_id = e1.id
         JOIN kg_entities e2 ON r.dst_id = e2.id
         WHERE e1.name LIKE ? OR e2.name LIKE ?
+        {order}
         LIMIT ?
         """,
         (q, q, limit),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def neighbors_2hop(name: str, first_limit: int = 10, second_limit: int = 3,
+                   total_cap: int = 15) -> list:
+    """Bounded two-hop expansion around `name`.
+
+    Returns relations tagged with `hop` (1 = directly touches `name`, 2 = one
+    step further out). Hard caps keep the fan-out small so multi-hop context
+    stays useful instead of flooding the output budget.
+    """
+    out, seen = [], set()
+
+    def _key(r):
+        return (r.get("src"), r.get("rel"), r.get("dst"))
+
+    first = neighbors(name, limit=first_limit, by_weight=True)
+    frontier = []
+    name_l = (name or "").lower()
+    for r in first:
+        k = _key(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append({**r, "hop": 1})
+        for node in (r.get("src"), r.get("dst")):
+            if node and name_l not in node.lower():
+                frontier.append(node)
+
+    for node in frontier:
+        if len(out) >= total_cap:
+            break
+        for r in neighbors(node, limit=second_limit, by_weight=True):
+            k = _key(r)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append({**r, "hop": 2})
+            if len(out) >= total_cap:
+                break
+    return out[:total_cap]
 
 
 def describe(name: str) -> str:

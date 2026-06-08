@@ -83,6 +83,37 @@ def test_find_entities_empty_text():
     assert graph.find_entities("   ") == []
 
 
+# ── neighbors_2hop ───────────────────────────────────────────────────────────
+
+def test_neighbors_2hop_tags_hops_and_dedups(monkeypatch):
+    def fake_neighbors(name, limit=10, by_weight=False):
+        if name == "Acme":
+            return [{"src": "Jane", "rel": "works_at", "dst": "Acme", "weight": 2.0}]
+        if name == "Jane":
+            return [
+                {"src": "Jane", "rel": "knows", "dst": "Bob", "weight": 1.0},
+                {"src": "Jane", "rel": "works_at", "dst": "Acme", "weight": 2.0},  # dup
+            ]
+        return []
+    monkeypatch.setattr(graph, "neighbors", fake_neighbors)
+
+    out = graph.neighbors_2hop("Acme")
+    hops = {(r["src"], r["rel"], r["dst"]): r["hop"] for r in out}
+    assert hops[("Jane", "works_at", "Acme")] == 1
+    assert hops[("Jane", "knows", "Bob")] == 2
+    assert len(out) == 2  # duplicate works_at edge collapsed
+
+
+def test_neighbors_2hop_respects_total_cap(monkeypatch):
+    def fake_neighbors(name, limit=10, by_weight=False):
+        return [{"src": name, "rel": "r", "dst": f"{name}-{i}", "weight": 1.0}
+                for i in range(10)]
+    monkeypatch.setattr(graph, "neighbors", fake_neighbors)
+
+    out = graph.neighbors_2hop("Hub", total_cap=5)
+    assert len(out) == 5
+
+
 # ── fused_recall ─────────────────────────────────────────────────────────────
 
 def test_fused_recall_combines_text_and_graph(monkeypatch):
