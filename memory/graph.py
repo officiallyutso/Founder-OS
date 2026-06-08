@@ -7,10 +7,20 @@ deals, topics) and typed relations between them. Flat vector search recalls
 No external services; everything is local.
 """
 import json
+import re
 from datetime import datetime
 from typing import Optional
 
 from memory.sql_store import get_conn
+
+# Cache of compiled entity matchers, invalidated when the entity table's
+# (count, max updated_at) signature changes. Avoids rescanning/recompiling on
+# every fused recall while still picking up nightly graph refreshes.
+_entity_cache = None
+_entity_cache_sig = None
+
+_ATTR_KEYS = ("role", "company", "status", "email", "industry")
+_TYPE_PRIORITY = {"person": 3, "company": 3, "deal": 2, "topic": 1, "tool": 1}
 
 
 def init_graph_db():
@@ -124,31 +134,77 @@ def describe(name: str) -> str:
     return "\n".join(lines)
 
 
-def find_entities(text: str, limit: int = 10) -> list:
-    """Return known graph entities whose name appears in `text`.
+def _fmt_attrs(attrs_json) -> str:
+    """Render the useful bits of an entity's attrs_json as a short string."""
+    try:
+        d = json.loads(attrs_json or "{}")
+    except Exception:
+        return ""
+    return ", ".join(f"{k}={d[k]}" for k in _ATTR_KEYS if d.get(k))
 
-    A dependency-free way to bridge free text to the graph: scan stored entity
-    names and keep those that occur (case-insensitive) in the text. Short names
-    (<3 chars) are ignored to avoid spurious substring hits. Used by
-    `retrieval.fused_recall` to expand text recall with graph relationships.
+
+def _entity_matcher(name: str):
+    """Compile a word-boundary matcher for an entity name.
+
+    Uses alnum lookarounds instead of \\b so it behaves with punctuation in
+    names and never matches inside a longer word ('Ann' won't hit 'announce').
     """
-    text_l = (text or "").lower()
-    if not text_l.strip():
-        return []
+    try:
+        return re.compile(r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])",
+                          re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def _load_entities() -> list:
+    """Load + cache entities as {name, type, attrs, _rx}, keyed by table signature."""
+    global _entity_cache, _entity_cache_sig
     conn = get_conn()
-    rows = conn.execute("SELECT name, type FROM kg_entities").fetchall()
+    sig_row = conn.execute(
+        "SELECT COUNT(*) AS c, MAX(updated_at) AS u FROM kg_entities").fetchone()
+    sig = (sig_row["c"], sig_row["u"])
+    if _entity_cache is not None and sig == _entity_cache_sig:
+        conn.close()
+        return _entity_cache
+    rows = conn.execute("SELECT name, type, attrs_json FROM kg_entities").fetchall()
     conn.close()
-    seen, out = set(), []
+    cache = []
     for r in rows:
         name = r["name"]
         if not name or len(name) < 3:
             continue
-        if name.lower() in text_l and name not in seen:
-            seen.add(name)
-            out.append({"name": name, "type": r["type"]})
-        if len(out) >= limit:
-            break
-    return out
+        rx = _entity_matcher(name)
+        if rx is None:
+            continue
+        cache.append({"name": name, "type": r["type"],
+                      "attrs": _fmt_attrs(r["attrs_json"]), "_rx": rx})
+    _entity_cache, _entity_cache_sig = cache, sig
+    return cache
+
+
+def find_entities(text: str, limit: int = 8, query: str = None) -> list:
+    """Return known graph entities mentioned in `text`, ranked by relevance.
+
+    Bridges free text to the graph: match stored entity names with word
+    boundaries (no substring false positives), then rank by whether the entity
+    appears in the original `query` (strong signal), its type, and name
+    specificity. Returns dicts of {name, type, attrs}. Used by
+    `retrieval.fused_recall` to expand text recall with graph relationships.
+    """
+    if not (text or "").strip():
+        return []
+    query = query or ""
+    scored = []
+    for e in _load_entities():
+        if not e["_rx"].search(text):
+            continue
+        in_query = bool(query and e["_rx"].search(query))
+        type_pri = _TYPE_PRIORITY.get(e["type"], 1)
+        score = (3 if in_query else 0) + type_pri + min(len(e["name"]) / 10.0, 2.0)
+        scored.append((score, e))
+    scored.sort(key=lambda se: se[0], reverse=True)
+    return [{"name": e["name"], "type": e["type"], "attrs": e["attrs"]}
+            for _, e in scored[:limit]]
 
 
 def build_from_crm() -> dict:
