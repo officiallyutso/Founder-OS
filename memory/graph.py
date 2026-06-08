@@ -124,6 +124,33 @@ def describe(name: str) -> str:
     return "\n".join(lines)
 
 
+def find_entities(text: str, limit: int = 10) -> list:
+    """Return known graph entities whose name appears in `text`.
+
+    A dependency-free way to bridge free text to the graph: scan stored entity
+    names and keep those that occur (case-insensitive) in the text. Short names
+    (<3 chars) are ignored to avoid spurious substring hits. Used by
+    `retrieval.fused_recall` to expand text recall with graph relationships.
+    """
+    text_l = (text or "").lower()
+    if not text_l.strip():
+        return []
+    conn = get_conn()
+    rows = conn.execute("SELECT name, type FROM kg_entities").fetchall()
+    conn.close()
+    seen, out = set(), []
+    for r in rows:
+        name = r["name"]
+        if not name or len(name) < 3:
+            continue
+        if name.lower() in text_l and name not in seen:
+            seen.add(name)
+            out.append({"name": name, "type": r["type"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_from_crm() -> dict:
     """Seed/refresh the graph from CRM contacts and companies."""
     from memory.sql_store import get_all_contacts

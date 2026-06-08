@@ -99,6 +99,46 @@ def hybrid_search(query: str, collections: list = None, k: int = 8) -> list:
     return _maybe_rerank(query, ranked, k)
 
 
+def fused_recall(query: str, k: int = 8, text_collections: list = None,
+                 max_entities: int = 5) -> dict:
+    """Cross-module recall: hybrid text retrieval + knowledge-graph relationships.
+
+    This is *context* fusion, not score fusion across modalities (mixing text
+    chunks and graph edges into one ranked list is unreliable). Instead:
+      1. Hybrid (dense+sparse, RRF) text recall — already ranked.
+      2. Detect known graph entities in the query AND the top text snippets
+         (the multi-hop bridge: text surfaces a name, the graph expands it).
+      3. Attach each entity's relationships.
+    The graph half is wrapped so any failure degrades to text-only recall.
+    """
+    text_hits = hybrid_search(query, collections=text_collections, k=k)
+
+    entities, relations = [], []
+    try:
+        from memory import graph
+        probe = query + " " + " ".join(
+            (h.get("text") or "")[:200] for h in text_hits[:5])
+        found = graph.find_entities(probe, limit=max_entities)
+        entities = [e["name"] for e in found]
+        seen = set()
+        for e in found:
+            for rel in graph.neighbors(e["name"], limit=10):
+                key = (rel.get("src"), rel.get("rel"), rel.get("dst"))
+                if key not in seen:
+                    seen.add(key)
+                    relations.append(rel)
+    except Exception as e:
+        logger.debug(f"[retrieval] fused_recall graph step skipped: {e}")
+
+    return {
+        "query": query,
+        "entities": entities,
+        "text": [{"collection": h.get("collection"), "text": h.get("text", "")}
+                 for h in text_hits],
+        "relations": relations,
+    }
+
+
 def episodic_recall(query: str, k: int = 6) -> list:
     """Recall conversation/episodic memory weighted by relevance + recency.
 

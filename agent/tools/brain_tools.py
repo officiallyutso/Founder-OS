@@ -1,6 +1,6 @@
 """Brain tools — hybrid recall and the knowledge graph."""
 from agent.registry import register
-from memory.retrieval import hybrid_search, episodic_recall
+from memory.retrieval import hybrid_search, episodic_recall, fused_recall
 from memory import graph
 
 
@@ -37,6 +37,39 @@ async def deep_recall(query: str, limit: int = 8):
 async def recall_episodes(query: str):
     hits = episodic_recall(query, k=6)
     return [{"text": h["text"][:300]} for h in hits]
+
+
+@register(
+    name="smart_recall",
+    description="Deep CONNECTED recall: fuses hybrid (dense+sparse) text recall across ALL "
+                "memory and documents WITH knowledge-graph relationships for the people/companies "
+                "mentioned in the query or surfaced by the text. Use for questions that need BOTH "
+                "what was said/written AND how entities relate — e.g. 'what do I know about Acme "
+                "and who do I know there?', or multi-hop network+context questions. For pure text "
+                "use deep_recall; for pure relationships use graph_lookup.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "limit": {"type": "integer", "description": "How many text passages to retrieve (default 8)."},
+        },
+        "required": ["query"],
+    },
+    category="memory",
+)
+async def smart_recall(query: str, limit: int = 8):
+    try:
+        limit = max(1, min(int(limit or 8), 16))
+    except (TypeError, ValueError):
+        limit = 8
+    res = fused_recall(query, k=limit)
+    return {
+        "entities": res["entities"],
+        "text": [{"collection": t["collection"], "text": (t["text"] or "")[:400]}
+                 for t in res["text"]],
+        "relations": [f"{r.get('src')} --{r.get('rel')}--> {r.get('dst')}"
+                      for r in res["relations"]],
+    }
 
 
 @register(
