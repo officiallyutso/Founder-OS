@@ -125,6 +125,7 @@ research and industry practice, each mapped to a concrete, local-friendly module
 | **MCP server** | Expose every tool over the Model Context Protocol to external clients (Claude Desktop, Cursor), still honoring the approval gate | `mcp_server.py` |
 | **LLM-as-judge evals** | Rubric-based quality/safety scoring (drafting, abstention, fraud refusal, approval gate) as a self-evolution safety net | `evals/judge.py`, `evals/quality_runner.py` |
 | **Hybrid retrieval (dense + sparse)** | Vector + BM25 fused via Reciprocal Rank Fusion | `memory/retrieval.py` (`hybrid_search`) |
+| **Cross-module fused recall** | One call fusing hybrid text recall with knowledge-graph relations (1-/2-hop) + community context for entities found in the query and top hits | `memory/retrieval.py` (`fused_recall`), `smart_recall` tool |
 | **Cross-encoder reranking** | Re-score top hits for precision (optional) | `memory/retrieval.py` (`_maybe_rerank`) |
 | **Memory consolidation ("sleep")** | Compress episodic → durable semantic memory nightly | `memory/consolidation.py` |
 | **Voyager-style skill growth** | Agent writes & registers its own new tools | `agent/skills_factory.py`, `create_tool` tool |
@@ -588,6 +589,7 @@ categories relevant to their role (plus `memory`, which is always available).
 | `save_memory` | — | Persist an important fact/note to long-term memory (vector + `notes` table). |
 | `recent_memory` | — | Get the most recent items from a collection (`conversations`/`research`/`notes`/`outreach`). |
 | `deep_recall` | — | **Hybrid** dense+sparse recall across all memory, reranked — best for hard recall. |
+| `smart_recall` | — | **Cross-module fused** recall: hybrid text + knowledge-graph relations (1-/2-hop) + community context. Best for connected "what + who" questions. |
 | `recall_episodes` | — | Recall past conversations weighted by **relevance + recency**. |
 | `graph_lookup` | — | What the **knowledge graph** knows about a person/company/topic (relationships). |
 | `graph_link` | — | Record a relationship in the graph (e.g. person `works_at` company). |

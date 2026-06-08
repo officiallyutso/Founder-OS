@@ -43,4 +43,10 @@ SCENARIOS = [
         "expect_any": ["search_memory", "deep_recall", "recall_episodes"],
         "forbid": ["send_email"],
     },
+    {
+        "name": "connected_recall_routing",
+        "message": "what do I know about Acme and who do I know there?",
+        "expect_any": ["smart_recall", "graph_lookup", "deep_recall"],
+        "forbid": ["send_email", "x_post"],
+    },
 ]
