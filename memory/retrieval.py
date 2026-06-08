@@ -11,6 +11,7 @@ Design choices for a local/free single-user setup:
     otherwise RRF order stands. This avoids forcing a heavy torch dependency.
 """
 import logging
+import re
 import time
 
 from memory.vector_store import get_collection, search, COLLECTIONS
@@ -18,6 +19,7 @@ from memory.vector_store import get_collection, search, COLLECTIONS
 logger = logging.getLogger(__name__)
 
 _RRF_K = 60
+_WORD = re.compile(r"[a-z0-9]+")
 _bm25_warned = False
 _cross_encoder = None
 _cross_encoder_tried = False
@@ -99,43 +101,89 @@ def hybrid_search(query: str, collections: list = None, k: int = 8) -> list:
     return _maybe_rerank(query, ranked, k)
 
 
+def _rank_relations(query: str, relations: list, cap: int) -> list:
+    """Order relations by query-token overlap, edge weight, and hop proximity."""
+    qt = set(_WORD.findall((query or "").lower()))
+
+    def score(r):
+        text = f"{r.get('src', '')} {r.get('rel', '')} {r.get('dst', '')}".lower()
+        overlap = len(qt & set(_WORD.findall(text)))
+        weight = float(r.get("weight") or 1.0)
+        hop_bonus = 1.0 if r.get("hop", 1) == 1 else 0.0
+        return overlap * 2 + weight + hop_bonus
+
+    return sorted(relations, key=score, reverse=True)[:cap]
+
+
+def _communities_for(entity_names: list, cap: int = 2) -> list:
+    """Return GraphRAG community summaries that contain any of the entities."""
+    try:
+        from memory import graphrag
+        comms = graphrag.list_communities()
+    except Exception as e:
+        logger.debug(f"[retrieval] community lookup skipped: {e}")
+        return []
+    names_l = {n.lower() for n in entity_names}
+    out = []
+    for c in comms:
+        members = {m.lower() for m in (c.get("members") or [])}
+        summary = (c.get("summary") or "").strip()
+        if summary and (names_l & members):
+            out.append(summary)
+        if len(out) >= cap:
+            break
+    return out
+
+
 def fused_recall(query: str, k: int = 8, text_collections: list = None,
-                 max_entities: int = 5) -> dict:
+                 max_entities: int = 5, hops: int = 1,
+                 max_relations: int = 15) -> dict:
     """Cross-module recall: hybrid text retrieval + knowledge-graph relationships.
 
     This is *context* fusion, not score fusion across modalities (mixing text
     chunks and graph edges into one ranked list is unreliable). Instead:
       1. Hybrid (dense+sparse, RRF) text recall — already ranked.
       2. Detect known graph entities in the query AND the top text snippets
-         (the multi-hop bridge: text surfaces a name, the graph expands it).
-      3. Attach each entity's relationships.
-    The graph half is wrapped so any failure degrades to text-only recall.
+         (the bridge: text surfaces a name, the graph expands it).
+      3. Attach each entity's relationships (1-hop, or bounded 2-hop when
+         hops>=2), ranked by query relevance + weight and capped.
+      4. Attach the GraphRAG community summaries those entities belong to.
+    The whole graph/community step is wrapped so any failure degrades to
+    text-only recall (low regression risk).
     """
     text_hits = hybrid_search(query, collections=text_collections, k=k)
 
-    entities, relations = [], []
+    entities, relations, communities = [], [], []
     try:
         from memory import graph
         probe = query + " " + " ".join(
             (h.get("text") or "")[:200] for h in text_hits[:5])
-        found = graph.find_entities(probe, limit=max_entities)
-        entities = [e["name"] for e in found]
+        found = graph.find_entities(probe, limit=max_entities, query=query)
+        entities = found
         seen = set()
         for e in found:
-            for rel in graph.neighbors(e["name"], limit=10):
+            name = e["name"]
+            rels = (graph.neighbors_2hop(name) if hops >= 2
+                    else graph.neighbors(name, limit=10, by_weight=True))
+            for rel in rels:
                 key = (rel.get("src"), rel.get("rel"), rel.get("dst"))
                 if key not in seen:
                     seen.add(key)
                     relations.append(rel)
+        relations = _rank_relations(query, relations, max_relations)
+        communities = _communities_for([e["name"] for e in found])
     except Exception as e:
         logger.debug(f"[retrieval] fused_recall graph step skipped: {e}")
 
+    logger.info("[retrieval] fused_recall: %d entities, %d relations, %d text, %d communities",
+                len(entities), len(relations), len(text_hits), len(communities))
     return {
         "query": query,
         "entities": entities,
+        "relations": relations,
+        "communities": communities,
         "text": [{"collection": h.get("collection"), "text": h.get("text", "")}
                  for h in text_hits],
-        "relations": relations,
     }
 
 

@@ -126,11 +126,12 @@ def test_fused_recall_combines_text_and_graph(monkeypatch):
                         lambda text, limit=5, query=None: [
                             {"name": "Acme", "type": "company", "attrs": ""}])
     monkeypatch.setattr(graph, "neighbors",
-                        lambda name, limit=10: [
-                            {"src": "Jane", "rel": "works_at", "dst": "Acme"}])
+                        lambda name, limit=10, by_weight=False: [
+                            {"src": "Jane", "rel": "works_at", "dst": "Acme", "weight": 1.0}])
+    monkeypatch.setattr(retrieval, "_communities_for", lambda names, cap=2: [])
 
     out = retrieval.fused_recall("what about Acme?", k=4)
-    assert out["entities"] == ["Acme"]
+    assert [e["name"] for e in out["entities"]] == ["Acme"]
     assert len(out["text"]) == 2
     assert out["relations"][0]["src"] == "Jane"
 
@@ -144,11 +145,89 @@ def test_fused_recall_dedups_relations(monkeypatch):
                             {"name": "Acme", "type": "company", "attrs": ""},
                             {"name": "Beta", "type": "company", "attrs": ""}])
     monkeypatch.setattr(graph, "neighbors",
-                        lambda name, limit=10: [
-                            {"src": "Acme", "rel": "partner_of", "dst": "Beta"}])
+                        lambda name, limit=10, by_weight=False: [
+                            {"src": "Acme", "rel": "partner_of", "dst": "Beta", "weight": 1.0}])
+    monkeypatch.setattr(retrieval, "_communities_for", lambda names, cap=2: [])
 
     out = retrieval.fused_recall("Acme Beta", k=4)
     assert len(out["relations"]) == 1
+
+
+def test_fused_recall_ranks_relations_by_query_overlap(monkeypatch):
+    monkeypatch.setattr(retrieval, "hybrid_search",
+                        lambda q, collections=None, k=8: [{"collection": "notes", "text": "x"}])
+    monkeypatch.setattr(graph, "find_entities",
+                        lambda text, limit=5, query=None: [
+                            {"name": "Acme", "type": "company", "attrs": ""}])
+    monkeypatch.setattr(graph, "neighbors",
+                        lambda name, limit=10, by_weight=False: [
+                            {"src": "Acme", "rel": "located_in", "dst": "Berlin", "weight": 1.0},
+                            {"src": "Acme", "rel": "raised", "dst": "funding", "weight": 1.0},
+                        ])
+    monkeypatch.setattr(retrieval, "_communities_for", lambda names, cap=2: [])
+
+    out = retrieval.fused_recall("how much funding did Acme raise?", k=4, max_relations=2)
+    # The 'raised/funding' edge overlaps the query and should rank first.
+    assert out["relations"][0]["rel"] == "raised"
+
+
+def test_fused_recall_caps_relations(monkeypatch):
+    monkeypatch.setattr(retrieval, "hybrid_search",
+                        lambda q, collections=None, k=8: [{"collection": "notes", "text": "x"}])
+    monkeypatch.setattr(graph, "find_entities",
+                        lambda text, limit=5, query=None: [
+                            {"name": "Acme", "type": "company", "attrs": ""}])
+    monkeypatch.setattr(graph, "neighbors",
+                        lambda name, limit=10, by_weight=False: [
+                            {"src": "Acme", "rel": f"r{i}", "dst": f"d{i}", "weight": 1.0}
+                            for i in range(30)])
+    monkeypatch.setattr(retrieval, "_communities_for", lambda names, cap=2: [])
+
+    out = retrieval.fused_recall("Acme", k=4, max_relations=5)
+    assert len(out["relations"]) == 5
+
+
+def test_fused_recall_uses_two_hop_when_requested(monkeypatch):
+    monkeypatch.setattr(retrieval, "hybrid_search",
+                        lambda q, collections=None, k=8: [{"collection": "notes", "text": "x"}])
+    monkeypatch.setattr(graph, "find_entities",
+                        lambda text, limit=5, query=None: [
+                            {"name": "Acme", "type": "company", "attrs": ""}])
+    called = {"hop2": False}
+
+    def two_hop(name, **kw):
+        called["hop2"] = True
+        return [{"src": "Acme", "rel": "knows", "dst": "Bob", "weight": 1.0, "hop": 2}]
+    monkeypatch.setattr(graph, "neighbors_2hop", two_hop)
+    monkeypatch.setattr(retrieval, "_communities_for", lambda names, cap=2: [])
+
+    out = retrieval.fused_recall("Acme network", k=4, hops=2)
+    assert called["hop2"] is True
+    assert out["relations"][0]["dst"] == "Bob"
+
+
+def test_fused_recall_attaches_communities(monkeypatch):
+    monkeypatch.setattr(retrieval, "hybrid_search",
+                        lambda q, collections=None, k=8: [{"collection": "notes", "text": "x"}])
+    monkeypatch.setattr(graph, "find_entities",
+                        lambda text, limit=5, query=None: [
+                            {"name": "Acme", "type": "company", "attrs": ""}])
+    monkeypatch.setattr(graph, "neighbors", lambda name, limit=10, by_weight=False: [])
+    monkeypatch.setattr(retrieval, "_communities_for",
+                        lambda names, cap=2: ["fintech cluster around Acme"])
+
+    out = retrieval.fused_recall("Acme", k=4)
+    assert out["communities"] == ["fintech cluster around Acme"]
+
+
+def test_communities_for_matches_members(monkeypatch):
+    import memory.graphrag as graphrag
+    monkeypatch.setattr(graphrag, "list_communities", lambda: [
+        {"summary": "fintech cluster", "members": ["Acme", "Beta"], "size": 2},
+        {"summary": "healthcare cluster", "members": ["MedCo"], "size": 1},
+    ])
+    out = retrieval._communities_for(["acme"])  # case-insensitive
+    assert out == ["fintech cluster"]
 
 
 def test_fused_recall_degrades_to_text_only_on_graph_error(monkeypatch):
@@ -163,4 +242,5 @@ def test_fused_recall_degrades_to_text_only_on_graph_error(monkeypatch):
     out = retrieval.fused_recall("anything", k=4)
     assert out["entities"] == []
     assert out["relations"] == []
+    assert out["communities"] == []
     assert len(out["text"]) == 1
