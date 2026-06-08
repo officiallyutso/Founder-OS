@@ -39,36 +39,62 @@ async def recall_episodes(query: str):
     return [{"text": h["text"][:300]} for h in hits]
 
 
+def _fmt_entity(e: dict) -> str:
+    s = f"{e.get('name')} ({e.get('type', '?')})"
+    if e.get("attrs"):
+        s += f" [{e['attrs']}]"
+    return s
+
+
+def _fmt_relation(r: dict) -> str:
+    tag = "" if r.get("hop", 1) == 1 else " (2-hop)"
+    return (f"{r.get('src')} ({r.get('src_type', '?')}) --{r.get('rel')}--> "
+            f"{r.get('dst')} ({r.get('dst_type', '?')}){tag}")
+
+
 @register(
     name="smart_recall",
     description="Deep CONNECTED recall: fuses hybrid (dense+sparse) text recall across ALL "
-                "memory and documents WITH knowledge-graph relationships for the people/companies "
-                "mentioned in the query or surfaced by the text. Use for questions that need BOTH "
-                "what was said/written AND how entities relate — e.g. 'what do I know about Acme "
-                "and who do I know there?', or multi-hop network+context questions. For pure text "
-                "use deep_recall; for pure relationships use graph_lookup.",
+                "memory and documents WITH knowledge-graph relationships AND network community "
+                "context for the people/companies in the query or surfaced by the text. Use for "
+                "questions that need BOTH what was said/written AND how entities relate — e.g. "
+                "'what do I know about Acme and who do I know there?', or multi-hop network+context "
+                "questions. Set hops=2 to expand relationships one step further. For pure text use "
+                "deep_recall; for a single entity's relationships use graph_lookup.",
     parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string"},
             "limit": {"type": "integer", "description": "How many text passages to retrieve (default 8)."},
+            "hops": {"type": "integer", "description": "Graph expansion depth: 1 (default) or 2."},
         },
         "required": ["query"],
     },
     category="memory",
 )
-async def smart_recall(query: str, limit: int = 8):
+async def smart_recall(query: str, limit: int = 8, hops: int = 1):
     try:
         limit = max(1, min(int(limit or 8), 16))
     except (TypeError, ValueError):
         limit = 8
-    res = fused_recall(query, k=limit)
+    try:
+        hops = 2 if int(hops) >= 2 else 1
+    except (TypeError, ValueError):
+        hops = 1
+
+    res = fused_recall(query, k=limit, hops=hops)
+    # Budget the payload: the loop truncates tool results at ~6500 chars, so cap
+    # snippet length and count to keep the structured context intact.
+    text_out = [{"collection": t["collection"], "text": (t["text"] or "")[:300]}
+                for t in res["text"][:8]]
     return {
-        "entities": res["entities"],
-        "text": [{"collection": t["collection"], "text": (t["text"] or "")[:400]}
-                 for t in res["text"]],
-        "relations": [f"{r.get('src')} --{r.get('rel')}--> {r.get('dst')}"
-                      for r in res["relations"]],
+        "entities": [_fmt_entity(e) for e in res["entities"]],
+        "relations": [_fmt_relation(r) for r in res["relations"]],
+        "communities": res.get("communities", []),
+        "text": text_out,
+        "summary_note": (f"Fused {len(res['text'])} passages, {len(res['relations'])} relations, "
+                         f"{len(res['entities'])} entities, "
+                         f"{len(res.get('communities', []))} community summaries."),
     }
 
 
