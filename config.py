@@ -39,6 +39,10 @@ class Config:
     # Tool-RAG: retrieve only the most relevant tools per turn instead of all of them
     tool_rag: bool
     tool_rag_k: int
+    # Vector store backend: "chroma" (local, default) or "qdrant" (managed/remote)
+    vector_backend: str
+    qdrant_url: str
+    qdrant_api_key: str
     # Google Calendar (optional)
     google_credentials_path: str
     google_token_path: str
@@ -101,6 +105,9 @@ def load_config() -> Config:
         cache_distance_threshold=float(os.getenv("CACHE_DISTANCE_THRESHOLD", "0.08") or "0.08"),
         tool_rag=os.getenv("TOOL_RAG", "true").strip().lower() in ("1", "true", "yes", "on"),
         tool_rag_k=int(os.getenv("TOOL_RAG_K", "16") or "16"),
+        vector_backend=os.getenv("VECTOR_BACKEND", "chroma").strip().lower(),
+        qdrant_url=os.getenv("QDRANT_URL", "").strip(),
+        qdrant_api_key=os.getenv("QDRANT_API_KEY", "").strip(),
         google_credentials_path=os.getenv("GOOGLE_CREDENTIALS_PATH", "./data/google_credentials.json"),
         google_token_path=os.getenv("GOOGLE_TOKEN_PATH", "./data/google_token.json"),
         x_api_key=os.getenv("X_API_KEY", ""),
