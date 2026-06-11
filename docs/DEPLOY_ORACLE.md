@@ -127,9 +127,16 @@ which won't happen for a live bot.
 3. `docker compose up -d --build` to restart.
 
 Embeddings are still computed locally with the same model, so Chroma and Qdrant are
-interchangeable. Note: switching backends does **not** copy existing vectors — the new
-backend starts empty, so re-ingest documents (the SQLite knowledge graph, CRM, notes,
-etc. are unaffected since they live in SQLite, not the vector store).
+interchangeable. To carry your **existing** vectors over (instead of starting empty),
+run the one-shot migration **before** flipping the backend — with `QDRANT_URL` /
+`QDRANT_API_KEY` set in `.env`:
+
+```bash
+docker compose run --rm founder-os python scripts/migrate_chroma_to_qdrant.py
+```
+
+It copies the stored embeddings directly (no re-embedding). The SQLite knowledge
+graph, CRM and notes are unaffected since they live in SQLite, not the vector store.
 
 ---
 

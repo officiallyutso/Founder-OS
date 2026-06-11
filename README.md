@@ -409,6 +409,8 @@ Because the bot uses Telegram long-polling, it needs **no public inbound port** 
 
 Embeddings default to **local Chroma** under `data/chroma` — zero setup, perfect for a single box. To use a managed/remote **Qdrant** cluster instead (e.g. the Qdrant Cloud free tier), set `VECTOR_BACKEND=qdrant` with `QDRANT_URL` / `QDRANT_API_KEY` in `.env`. Embeddings are computed locally with the same model either way, so the two stores are interchangeable; only the vector data lives in a different place. Everything else (SQLite knowledge graph, CRM, notes, backups) is unaffected.
 
+To carry existing vectors across the switch, run `python scripts/migrate_chroma_to_qdrant.py` (with the `QDRANT_*` vars set) before flipping `VECTOR_BACKEND` — it copies stored embeddings directly, no re-embedding.
+
 ### First run
 
 When it boots you'll see:
