@@ -5,8 +5,21 @@ services:
     env_file: .env
     # Persist the agent's entire brain (DB + vector store + backups) on the host
     # so it survives rebuilds. Mounting the host data/ keeps everything local.
+    # (When VECTOR_BACKEND=qdrant, vectors live in your remote cluster instead and
+    # this volume only holds the SQLite DB + backups.)
     volumes:
       - ./data:/app/data
     # Keep the cofounder running 24/7 so heartbeats, briefings, follow-ups,
     # monitors and nightly backups actually fire.
     restart: unless-stopped
+    # Cap log growth so months of uptime can't fill the host disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # The bot uses Telegram long-polling, so NO inbound/public port is required.
+    # The web dashboard binds to localhost INSIDE the container. To view it on a
+    # remote server, enable host networking (Linux only) and SSH-tunnel in:
+    #   ssh -L 8787:localhost:8787 <user>@<server>
+    # network_mode: host

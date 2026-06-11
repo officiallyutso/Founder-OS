@@ -401,6 +401,14 @@ docker compose down               # stop
 
 `docker-compose.yml` mounts `./data` as a volume, so the entire brain (SQLite DB + Chroma vectors + backups) lives on the host and survives rebuilds. The container reads your `.env` via `env_file`. A nightly job also zips the brain into `data/backups/` (last 14 kept); trigger one anytime by asking the bot to "back up now".
 
+### Hosting it in the cloud
+
+Because the bot uses Telegram long-polling, it needs **no public inbound port** — just outbound internet — so it runs cleanly on a small VM. For a step-by-step, zero-cost deploy on **Oracle Cloud Always Free (ARM)** (and a comparison of Railway / Render / Fly / a $5 VPS), see [`docs/DEPLOY_ORACLE.md`](docs/DEPLOY_ORACLE.md).
+
+### Vector backend (local Chroma vs managed Qdrant)
+
+Embeddings default to **local Chroma** under `data/chroma` — zero setup, perfect for a single box. To use a managed/remote **Qdrant** cluster instead (e.g. the Qdrant Cloud free tier), set `VECTOR_BACKEND=qdrant` with `QDRANT_URL` / `QDRANT_API_KEY` in `.env`. Embeddings are computed locally with the same model either way, so the two stores are interchangeable; only the vector data lives in a different place. Everything else (SQLite knowledge graph, CRM, notes, backups) is unaffected.
+
 ### First run
 
 When it boots you'll see:
