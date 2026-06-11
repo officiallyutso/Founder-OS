@@ -403,7 +403,10 @@ docker compose down               # stop
 
 ### Hosting it in the cloud
 
-Because the bot uses Telegram long-polling, it needs **no public inbound port** — just outbound internet — so it runs cleanly on a small VM. For a step-by-step, zero-cost deploy on **Oracle Cloud Always Free (ARM)** (and a comparison of Railway / Render / Fly / a $5 VPS), see [`docs/DEPLOY_ORACLE.md`](docs/DEPLOY_ORACLE.md).
+Because the bot uses Telegram long-polling, it needs **no public inbound port** — just outbound internet — so it runs cleanly on a small VM or your own PC.
+
+- **Self-host on Windows** (run 24/7 as a hidden background service, vectors in free Qdrant Cloud): [`docs/INSTALL_WINDOWS.md`](docs/INSTALL_WINDOWS.md).
+- **Cloud deploy** — step-by-step zero-cost on **Oracle Cloud Always Free (ARM)**, plus a comparison of Railway / Render / Fly / a $5 VPS: [`docs/DEPLOY_ORACLE.md`](docs/DEPLOY_ORACLE.md).
 
 ### Vector backend (local Chroma vs managed Qdrant)
 
